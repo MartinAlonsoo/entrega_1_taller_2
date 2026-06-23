@@ -3,6 +3,7 @@ import React from "react";
 interface Props {
   account: string | null;
   isSigner: boolean;
+  roleLabel?: string;
   isConnected: boolean;
   chainOk: boolean;
   loading: boolean;
@@ -17,6 +18,7 @@ function shortenAddr(addr: string) {
 const WalletConnect: React.FC<Props> = ({
   account,
   isSigner,
+  roleLabel,
   isConnected,
   chainOk,
   loading,
@@ -90,11 +92,11 @@ const WalletConnect: React.FC<Props> = ({
               </span>
               {isSigner ? (
                 <span className="badge badge-executed" style={{ padding: "0.1rem 0.5rem", fontSize: "0.7rem" }}>
-                  Signer
+                  {roleLabel || "Signer"}
                 </span>
               ) : (
                 <span className="badge badge-pending" style={{ padding: "0.1rem 0.5rem", fontSize: "0.7rem" }}>
-                  No signer
+                  {roleLabel || "No signer"}
                 </span>
               )}
             </span>
