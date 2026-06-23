@@ -42,8 +42,9 @@ async function deployMockToken(deployer) {
     process.env.MOCK_TOKEN_INITIAL_SUPPLY || "1000000"
   );
 
-  // Mint inicial para poder probar approve -> fund desde la wallet deployer.
-  await token.mint(deployer.address, initialSupply);
+  // Esperar el minado evita reutilizar el nonce del mint en el siguiente deploy.
+  const mintTx = await token.mint(deployer.address, initialSupply);
+  await mintTx.wait();
 
   console.log(`MockERC20 desplegado en: ${token.address}`);
   console.log(
