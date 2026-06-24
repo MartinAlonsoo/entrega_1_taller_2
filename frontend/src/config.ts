@@ -28,4 +28,4 @@ export const MARKETPLACE_DEPLOYMENT_BLOCK = BigInt(
 
 export const SEPOLIA_CHAIN_ID = "0xaa36a7"; // 11155111 en hex
 
-export const SEPOLIA_RPC = "https://rpc.sepolia.org";
+export const SEPOLIA_RPC = import.meta.env.VITE_SEPOLIA_RPC_URL?.trim() || "https://gateway.tenderly.co/public/sepolia";
