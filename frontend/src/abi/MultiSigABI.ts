@@ -174,6 +174,6 @@ const MultiSigABI = [
   },
   { "stateMutability": "payable", "type": "receive" },
   { "stateMutability": "payable", "type": "fallback" }
-];
+] as const;
 
 export default MultiSigABI;

@@ -1,5 +1,9 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { useAccount, useChainId } from "wagmi";
+import { sepolia } from "wagmi/chains";
+import type { Address, Hex } from "viem";
 import { useMarketplace } from "./hooks/useMarketplace";
+import { useMultisig } from "./hooks/useMultisig";
 import WalletConnect from "./components/WalletConnect";
 import JobBoard from "./components/JobBoard";
 import JobDetail from "./components/JobDetail";
@@ -7,8 +11,19 @@ import JobActionsPanel from "./components/JobActionsPanel";
 import PublishJobForm from "./components/PublishJobForm";
 import MarketplaceInfo from "./components/MarketplaceInfo";
 import MultisigEvaluatorHelper from "./components/MultisigEvaluatorHelper";
-import { MARKETPLACE_ADDRESS, MULTISIG_ADDRESS, PAYMENT_TOKEN_ADDRESS } from "./config";
+import MultisigDashboard from "./components/MultisigDashboard";
+import {
+  MARKETPLACE_ADDRESS,
+  MULTISIG_ADDRESS,
+  PAYMENT_TOKEN_ADDRESS,
+} from "./config";
+import {
+  MultisigProposalDraft,
+  NewMultisigProposalDraft,
+} from "./types/multisig";
 import "./index.css";
+
+type AppView = "marketplace" | "multisig";
 
 interface Toast {
   id: number;
@@ -19,32 +34,55 @@ interface Toast {
 let toastId = 0;
 
 const App: React.FC = () => {
-  const marketplace = useMarketplace();
+  const [activeView, setActiveView] = useState<AppView>("marketplace");
+  const [proposalDraft, setProposalDraft] =
+    useState<MultisigProposalDraft | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const { isConnected } = useAccount();
+  const chainId = useChainId();
+  const chainOk = chainId === sepolia.id;
+  const marketplace = useMarketplace();
+  const multisig = useMultisig();
 
   const addToast = (type: Toast["type"], message: string) => {
     const id = ++toastId;
-    setToasts((prev) => [...prev, { id, type, message }]);
-    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4500);
+    setToasts((previous) => [...previous, { id, type, message }]);
+    setTimeout(
+      () =>
+        setToasts((previous) => previous.filter((toast) => toast.id !== id)),
+      4500
+    );
   };
 
   useEffect(() => {
-    if (marketplace.error) {
-      const short =
-        marketplace.error.length > 100
-          ? marketplace.error.slice(0, 97) + "…"
-          : marketplace.error;
-      addToast("error", short);
-    }
-  }, [marketplace.error]);
+    const error =
+      activeView === "marketplace"
+        ? marketplace.error
+        : multisig.state.error;
+    if (!error) return;
 
-  const handleCreateJob = async (...args: Parameters<typeof marketplace.createJob>) => {
+    addToast(
+      "error",
+      error.length > 100 ? `${error.slice(0, 97)}…` : error
+    );
+  }, [
+    activeView,
+    marketplace.error,
+    multisig.state.error,
+  ]);
+
+  const handleCreateJob = async (
+    ...args: Parameters<typeof marketplace.createJob>
+  ) => {
     const ok = await marketplace.createJob(...args);
     if (ok) addToast("success", "Trabajo publicado exitosamente");
     return ok;
   };
 
-  const handleApprove = async (...args: Parameters<typeof marketplace.approveMarketplace>) => {
+  const handleApproveToken = async (
+    ...args: Parameters<typeof marketplace.approveMarketplace>
+  ) => {
     const ok = await marketplace.approveMarketplace(...args);
     if (ok) addToast("success", "Token aprobado para el Marketplace");
     return ok;
@@ -56,209 +94,261 @@ const App: React.FC = () => {
     return ok;
   };
 
-  const handleSubmit = async (...args: Parameters<typeof marketplace.submit>) => {
+  const handleSubmit = async (
+    ...args: Parameters<typeof marketplace.submit>
+  ) => {
     const ok = await marketplace.submit(...args);
     if (ok) addToast("success", "Entrega registrada");
     return ok;
   };
 
-  const handleComplete = async (...args: Parameters<typeof marketplace.complete>) => {
+  const handleComplete = async (
+    ...args: Parameters<typeof marketplace.complete>
+  ) => {
     const ok = await marketplace.complete(...args);
     if (ok) addToast("success", "Trabajo completado y pago liberado");
     return ok;
   };
 
-  const handleReject = async (...args: Parameters<typeof marketplace.reject>) => {
+  const handleReject = async (
+    ...args: Parameters<typeof marketplace.reject>
+  ) => {
     const ok = await marketplace.reject(...args);
     if (ok) addToast("info", "Trabajo rechazado");
     return ok;
   };
 
-  const handleClaimRefund = async (...args: Parameters<typeof marketplace.claimRefund>) => {
+  const handleClaimRefund = async (
+    ...args: Parameters<typeof marketplace.claimRefund>
+  ) => {
     const ok = await marketplace.claimRefund(...args);
     if (ok) addToast("success", "Reembolso reclamado");
     return ok;
   };
 
+  const openMultisigDraft = (draft: NewMultisigProposalDraft) => {
+    setProposalDraft({ ...draft, id: Date.now() });
+    setActiveView("multisig");
+    addToast("info", "Propuesta MultiSig precargada para revisión");
+  };
+
+  const handlePropose = async (
+    to: Address,
+    value: string,
+    data: Hex
+  ) => {
+    const ok = await multisig.propose(to, value, data);
+    if (ok) addToast("success", "Propuesta MultiSig creada");
+    return ok;
+  };
+
+  const handleApproveProposal = async (proposalId: bigint) => {
+    const ok = await multisig.approve(proposalId);
+    if (ok) addToast("success", `Propuesta #${proposalId} aprobada`);
+    return ok;
+  };
+
+  const handleExecuteProposal = async (proposalId: bigint) => {
+    const ok = await multisig.execute(proposalId);
+    if (ok) {
+      await marketplace.refresh();
+      addToast(
+        "success",
+        "Propuesta ejecutada; estado del Marketplace actualizado"
+      );
+    }
+    return ok;
+  };
+
+  const handleCancelProposal = async (proposalId: bigint) => {
+    const ok = await multisig.cancel(proposalId);
+    if (ok) addToast("info", `Propuesta #${proposalId} cancelada`);
+    return ok;
+  };
+
+  const duplicateProposal = useMemo(() => {
+    if (!proposalDraft) return false;
+    return multisig.state.proposals.some(
+      (proposal) =>
+        !proposal.executed &&
+        !proposal.cancelled &&
+        proposal.to.toLowerCase() === proposalDraft.to.toLowerCase() &&
+        proposal.data.toLowerCase() === proposalDraft.data.toLowerCase()
+    );
+  }, [multisig.state.proposals, proposalDraft]);
+
+  const walletIsSigner =
+    activeView === "multisig" ? multisig.state.isSigner : true;
+  const walletRoleLabel =
+    activeView === "multisig"
+      ? multisig.state.isSigner
+        ? "Signer"
+        : "No signer"
+      : "Marketplace";
+  const txPending =
+    activeView === "multisig"
+      ? multisig.state.txPending
+      : marketplace.pending;
+
   return (
     <div style={{ minHeight: "100vh" }}>
-      <header
-        style={{
-          position: "sticky",
-          top: 0,
-          zIndex: 100,
-          background: "rgba(8, 11, 20, 0.9)",
-          backdropFilter: "blur(20px)",
-          borderBottom: "1px solid var(--color-border-light)",
-          padding: "0 1.5rem",
-          height: "64px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: "1rem",
-        }}
-      >
-        <div className="flex items-center gap-3">
-          <div
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: "10px",
-              background: "linear-gradient(135deg, #10b981, #06b6d4)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "1.1rem",
-              boxShadow: "0 0 20px rgba(16, 185, 129, 0.35)",
-              flexShrink: 0,
-            }}
-          >
-            ⚒️
-          </div>
+      <header className="app-header">
+        <div className="app-brand">
+          <div className="app-brand-icon">⚒️</div>
           <div>
             <h1 style={{ fontSize: "1.1rem", lineHeight: 1 }}>
               <span style={{ color: "var(--color-success)" }}>Job</span>
-              <span style={{ color: "var(--color-accent-2)" }}>Marketplace</span>
+              <span style={{ color: "var(--color-accent-2)" }}>
+                Marketplace
+              </span>
             </h1>
-            <p style={{ fontSize: "0.7rem", color: "var(--color-text-muted)", marginTop: "2px" }}>
-              Sepolia Testnet
-            </p>
+            <p className="text-xs text-muted mt-1">Sepolia Testnet</p>
           </div>
         </div>
 
+        <nav className="app-tabs" aria-label="Secciones principales">
+          <button
+            className={activeView === "marketplace" ? "active" : ""}
+            onClick={() => setActiveView("marketplace")}
+          >
+            Marketplace
+          </button>
+          <button
+            className={activeView === "multisig" ? "active" : ""}
+            onClick={() => setActiveView("multisig")}
+            disabled={!MULTISIG_ADDRESS}
+            title={
+              MULTISIG_ADDRESS
+                ? "Administrar propuestas MultiSig"
+                : "VITE_MULTISIG_ADDRESS no está configurada"
+            }
+          >
+            Administración MultiSig
+            {multisig.pendingProposalCount > 0 && (
+              <span className="tab-count">
+                {multisig.pendingProposalCount}
+              </span>
+            )}
+          </button>
+        </nav>
+
         <WalletConnect
-          account={marketplace.account}
-          isSigner={true}
-          roleLabel="Marketplace"
-          isConnected={marketplace.isConnected}
-          chainOk={marketplace.chainOk}
-          loading={marketplace.walletLoading}
-          txPending={marketplace.pending}
-          onConnect={marketplace.connect}
+          isSigner={walletIsSigner}
+          roleLabel={walletRoleLabel}
+          txPending={txPending}
         />
       </header>
 
-      {marketplace.isConnected && !marketplace.chainOk && (
-        <div
-          style={{
-            background: "rgba(245, 158, 11, 0.08)",
-            borderBottom: "1px solid rgba(245, 158, 11, 0.2)",
-            padding: "0.75rem 1.5rem",
-            textAlign: "center",
-            color: "#fbbf24",
-            fontSize: "0.875rem",
-          }}
-        >
-          ⚠️ Cambia a Sepolia para interactuar con el Marketplace.
+      {isConnected && !chainOk && (
+        <div className="network-warning">
+          ⚠️ Cambia a Sepolia para interactuar con los contratos.
         </div>
       )}
 
-      {!marketplace.isConnected && (
-        <main
-          style={{
-            maxWidth: "900px",
-            margin: "0 auto",
-            padding: "4rem 1.5rem",
-          }}
-        >
-          <div className="card animate-in" style={{ textAlign: "center", padding: "3rem 2rem" }}>
+      {!isConnected && (
+        <main className="welcome-layout">
+          <div
+            className="card animate-in"
+            style={{ textAlign: "center", padding: "3rem 2rem" }}
+          >
             <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>🧑‍💻</div>
             <h1 className="mb-3">Marketplace de trabajos con escrow</h1>
             <p className="text-muted mb-4">
-              Conecta tu wallet para publicar trabajos, fondear con ERC-20,
-              entregar resultados y resolver pagos mediante evaluadores.
+              Conecta una única wallet para operar el Marketplace y, si es
+              signer, administrar el evaluador MultiSig.
             </p>
-            <button className="btn btn-primary" onClick={marketplace.connect} style={{ margin: "0 auto" }}>
-              Conectar Wallet
-            </button>
+            <p className="text-sm text-cyan">
+              Usá el botón RainbowKit del encabezado para conectar.
+            </p>
           </div>
         </main>
       )}
 
-      {marketplace.isConnected && marketplace.chainOk && (
-        <main
-          style={{
-            maxWidth: "1280px",
-            margin: "0 auto",
-            padding: "2rem 1.5rem",
-            display: "grid",
-            gridTemplateColumns: "1fr 340px",
-            gridTemplateRows: "auto 1fr",
-            gap: "1.5rem",
-            alignItems: "start",
-          }}
-        >
-          <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
-            <PublishJobForm
-              pending={marketplace.pending}
-              tokenDecimals={marketplace.token.decimals}
-              tokenSymbol={marketplace.token.symbol}
-              multisigAddress={MULTISIG_ADDRESS}
-              onCreateJob={handleCreateJob}
-            />
+      {isConnected &&
+        chainOk &&
+        activeView === "marketplace" && (
+          <main className="app-layout">
+            <section className="flex flex-col gap-4">
+              <PublishJobForm
+                pending={marketplace.pending}
+                tokenDecimals={marketplace.token.decimals}
+                tokenSymbol={marketplace.token.symbol}
+                multisigAddress={MULTISIG_ADDRESS}
+                onCreateJob={handleCreateJob}
+              />
 
-            <JobBoard
-              jobs={marketplace.jobs}
-              selectedJobId={marketplace.selectedJobId}
-              tokenDecimals={marketplace.token.decimals}
-              tokenSymbol={marketplace.token.symbol}
-              onSelectJob={marketplace.setSelectedJobId}
-            />
-          </div>
+              <JobBoard
+                jobs={marketplace.jobs}
+                selectedJobId={marketplace.selectedJobId}
+                tokenDecimals={marketplace.token.decimals}
+                tokenSymbol={marketplace.token.symbol}
+                onSelectJob={marketplace.setSelectedJobId}
+              />
+            </section>
 
-          <aside style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
-            <MarketplaceInfo
-              account={marketplace.account}
-              token={marketplace.token}
-              marketplaceAddress={MARKETPLACE_ADDRESS}
-              paymentTokenAddress={PAYMENT_TOKEN_ADDRESS}
-              multisigAddress={MULTISIG_ADDRESS}
-              onRefresh={marketplace.refresh}
-            />
+            <aside className="flex flex-col gap-4">
+              <MarketplaceInfo
+                account={marketplace.account}
+                token={marketplace.token}
+                marketplaceAddress={MARKETPLACE_ADDRESS}
+                paymentTokenAddress={PAYMENT_TOKEN_ADDRESS}
+                multisigAddress={MULTISIG_ADDRESS}
+                onRefresh={marketplace.refresh}
+              />
 
-            <JobDetail
-              job={marketplace.selectedJob}
-              roles={marketplace.roles}
-              tokenDecimals={marketplace.token.decimals}
-              tokenSymbol={marketplace.token.symbol}
-            />
+              <JobDetail
+                job={marketplace.selectedJob}
+                roles={marketplace.roles}
+                tokenDecimals={marketplace.token.decimals}
+                tokenSymbol={marketplace.token.symbol}
+                deliverable={marketplace.selectedDeliverable}
+              />
 
-            <JobActionsPanel
-              job={marketplace.selectedJob}
-              roles={marketplace.roles}
-              pending={marketplace.pending}
-              token={marketplace.token}
-              onApprove={handleApprove}
-              onFund={handleFund}
-              onSubmit={handleSubmit}
-              onComplete={handleComplete}
-              onReject={handleReject}
-              onClaimRefund={handleClaimRefund}
-            />
+              <JobActionsPanel
+                job={marketplace.selectedJob}
+                roles={marketplace.roles}
+                pending={marketplace.pending}
+                token={marketplace.token}
+                onApprove={handleApproveToken}
+                onSetProvider={marketplace.setProvider}
+                onFund={handleFund}
+                onSubmit={handleSubmit}
+                onComplete={handleComplete}
+                onReject={handleReject}
+                onClaimRefund={handleClaimRefund}
+              />
 
-            <MultisigEvaluatorHelper selectedJobId={marketplace.selectedJobId} />
-          </aside>
-        </main>
+              <MultisigEvaluatorHelper
+                selectedJobId={marketplace.selectedJobId}
+                selectedJob={marketplace.selectedJob}
+                onCreateProposal={openMultisigDraft}
+              />
+            </aside>
+          </main>
+        )}
+
+      {isConnected && chainOk && activeView === "multisig" && (
+        <MultisigDashboard
+          state={multisig.state}
+          proposalDraft={proposalDraft}
+          duplicateWarning={duplicateProposal}
+          onProposalCreated={() => setProposalDraft(null)}
+          onBackToMarketplace={() => setActiveView("marketplace")}
+          onPropose={handlePropose}
+          onApprove={handleApproveProposal}
+          onExecute={handleExecuteProposal}
+          onCancel={handleCancelProposal}
+          hasApproved={multisig.hasApproved}
+        />
       )}
 
       <div className="toast-container">
-        {toasts.map((t) => (
-          <div key={t.id} className={`toast toast-${t.type}`}>
-            {t.message}
+        {toasts.map((toast) => (
+          <div key={toast.id} className={`toast toast-${toast.type}`}>
+            {toast.message}
           </div>
         ))}
       </div>
-
-      <style>{`
-        @media (max-width: 768px) {
-          main {
-            grid-template-columns: 1fr !important;
-          }
-          aside {
-            order: -1;
-          }
-        }
-      `}</style>
     </div>
   );
 };

@@ -1,5 +1,5 @@
 import React from "react";
-import { ethers } from "ethers";
+import { formatUnits } from "viem";
 import { Erc20State } from "../hooks/useErc20";
 
 interface Props {
@@ -16,8 +16,8 @@ function shortenAddr(addr: string) {
   return `${addr.slice(0, 10)}…${addr.slice(-6)}`;
 }
 
-function formatAmount(amount: ethers.BigNumber, decimals: number, symbol: string) {
-  const formatted = ethers.utils.formatUnits(amount, decimals || 18);
+function formatAmount(amount: bigint, decimals: number, symbol: string) {
+  const formatted = formatUnits(amount, decimals || 18);
   return `${Number(formatted).toLocaleString(undefined, { maximumFractionDigits: 4 })} ${symbol || "TOKEN"}`;
 }
 

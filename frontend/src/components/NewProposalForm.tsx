@@ -1,29 +1,50 @@
 import React, { useState } from "react";
+import { isAddress, isHex, type Address, type Hex } from "viem";
 
 interface Props {
   isSigner: boolean;
   txPending: boolean;
-  onPropose: (to: string, value: string, data: string) => Promise<boolean>;
+  initialValues?: {
+    to: Address;
+    value: string;
+    data: Hex;
+  };
+  sourceJobId?: bigint;
+  duplicateWarning?: boolean;
+  onPropose: (to: Address, value: string, data: Hex) => Promise<boolean>;
+  onSuccess?: () => void;
 }
 
-const NewProposalForm: React.FC<Props> = ({ isSigner, txPending, onPropose }) => {
-  const [to, setTo] = useState("");
-  const [value, setValue] = useState("");
-  const [data, setData] = useState("");
+const NewProposalForm: React.FC<Props> = ({
+  isSigner,
+  txPending,
+  initialValues,
+  sourceJobId,
+  duplicateWarning = false,
+  onPropose,
+  onSuccess,
+}) => {
+  const [to, setTo] = useState<string>(initialValues?.to ?? "");
+  const [value, setValue] = useState(initialValues?.value ?? "");
+  const [data, setData] = useState<string>(initialValues?.data ?? "");
   const [localError, setLocalError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const validate = () => {
-    if (!to || !to.startsWith("0x") || to.length !== 42) {
-      setLocalError("Dirección destino inválida (debe ser 0x... con 42 caracteres)");
+    if (!isAddress(to)) {
+      setLocalError("Dirección destino inválida");
       return false;
     }
-    if (value && isNaN(parseFloat(value))) {
-      setLocalError("El valor en ETH debe ser un número");
+    if (value && (isNaN(Number(value)) || Number(value) < 0)) {
+      setLocalError("El valor en ETH debe ser un número mayor o igual a 0");
       return false;
     }
-    if (data && data !== "0x" && !/^0x[0-9a-fA-F]*$/.test(data)) {
-      setLocalError("El calldata debe ser hexadecimal (ej: 0xabcd...)");
+    if (
+      data &&
+      data !== "0x" &&
+      (!isHex(data) || data.length % 2 !== 0)
+    ) {
+      setLocalError("El calldata debe ser hexadecimal válido y de longitud par");
       return false;
     }
     setLocalError("");
@@ -34,12 +55,17 @@ const NewProposalForm: React.FC<Props> = ({ isSigner, txPending, onPropose }) =>
     e.preventDefault();
     if (!validate()) return;
     setSubmitting(true);
-    const ok = await onPropose(to, value || "0", data || "0x");
+    const ok = await onPropose(
+      to as Address,
+      value || "0",
+      (data || "0x") as Hex
+    );
     setSubmitting(false);
     if (ok) {
       setTo("");
       setValue("");
       setData("");
+      onSuccess?.();
     }
   };
 
@@ -75,6 +101,39 @@ const NewProposalForm: React.FC<Props> = ({ isSigner, txPending, onPropose }) =>
 
       <form onSubmit={handleSubmit} id="form-new-proposal">
         <div className="flex flex-col gap-4">
+          {sourceJobId !== undefined && (
+            <div
+              style={{
+                padding: "0.75rem 0.875rem",
+                background: "rgba(6, 182, 212, 0.08)",
+                border: "1px solid rgba(6, 182, 212, 0.25)",
+                borderRadius: "var(--radius-sm)",
+                color: "#67e8f9",
+                fontSize: "0.82rem",
+                lineHeight: 1.55,
+              }}
+            >
+              Esta propuesta llamará a{" "}
+              <span className="font-mono">JobMarketplace.complete</span> para el
+              trabajo #{sourceJobId.toString()}. Revisá destino, valor y calldata antes de
+              firmar.
+            </div>
+          )}
+
+          {duplicateWarning && (
+            <div
+              style={{
+                padding: "0.625rem 0.875rem",
+                background: "rgba(245, 158, 11, 0.1)",
+                border: "1px solid rgba(245, 158, 11, 0.25)",
+                borderRadius: "var(--radius-sm)",
+                color: "#fbbf24",
+                fontSize: "0.82rem",
+              }}
+            >
+              Ya existe una propuesta pendiente con el mismo destino y calldata.
+            </div>
+          )}
           <div>
             <label htmlFor="input-to">Dirección Destino *</label>
             <input

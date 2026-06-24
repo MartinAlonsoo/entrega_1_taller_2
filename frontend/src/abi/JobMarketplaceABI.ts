@@ -197,6 +197,6 @@ const JobMarketplaceABI = [
   { inputs: [], name: "ProviderAlreadySet", type: "error" },
   { inputs: [], name: "JobNotExpired", type: "error" },
   { inputs: [], name: "TokenTransferFailed", type: "error" },
-];
+] as const;
 
 export default JobMarketplaceABI;

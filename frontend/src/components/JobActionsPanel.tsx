@@ -1,7 +1,8 @@
 import React, { useState } from "react";
-import { ethers } from "ethers";
+import { isAddress, zeroAddress, type Address } from "viem";
 import { Erc20State } from "../hooks/useErc20";
 import { Job, JobRoles, JobStatus } from "../hooks/useJobs";
+import { validateDeliverableContent } from "../lib/deliverables";
 import { formatTokenAmount } from "./JobCard";
 
 interface Props {
@@ -9,21 +10,26 @@ interface Props {
   roles: JobRoles;
   pending: boolean;
   token: Erc20State;
-  onApprove: (amount: ethers.BigNumberish) => Promise<boolean>;
-  onFund: (jobId: number) => Promise<boolean>;
-  onSubmit: (jobId: number, ref: string) => Promise<boolean>;
-  onComplete: (jobId: number, reason: string) => Promise<boolean>;
-  onReject: (jobId: number, reason: string) => Promise<boolean>;
-  onClaimRefund: (jobId: number) => Promise<boolean>;
+  onApprove: (amount: bigint) => Promise<boolean>;
+  onSetProvider: (jobId: bigint, provider: Address) => Promise<boolean>;
+  onFund: (jobId: bigint) => Promise<boolean>;
+  onSubmit: (jobId: bigint, ref: string) => Promise<boolean>;
+  onComplete: (jobId: bigint, reason: string) => Promise<boolean>;
+  onReject: (
+    jobId: bigint,
+    reason: string,
+    includeToken?: boolean
+  ) => Promise<boolean>;
+  onClaimRefund: (jobId: bigint) => Promise<boolean>;
 }
 
 function isExpired(job: Job) {
-  return Date.now() / 1000 > job.expiresAt;
+  return BigInt(Math.floor(Date.now() / 1000)) > job.expiresAt;
 }
 
 function validateBytes32Text(value: string, label: string) {
   if (!value.trim()) return `${label} es obligatorio`;
-  if (ethers.utils.toUtf8Bytes(value).length > 31) {
+  if (new TextEncoder().encode(value).length > 31) {
     return `${label} debe tener 31 bytes o menos`;
   }
   return "";
@@ -35,14 +41,17 @@ const JobActionsPanel: React.FC<Props> = ({
   pending,
   token,
   onApprove,
+  onSetProvider,
   onFund,
   onSubmit,
   onComplete,
   onReject,
   onClaimRefund,
 }) => {
-  const [deliverableRef, setDeliverableRef] = useState("");
-  const [reason, setReason] = useState("");
+  const [deliverableContent, setDeliverableContent] = useState("");
+  const [clientRejectReason, setClientRejectReason] = useState("");
+  const [evaluatorReason, setEvaluatorReason] = useState("");
+  const [providerAddress, setProviderAddress] = useState("");
   const [localError, setLocalError] = useState("");
   const [localLoading, setLocalLoading] = useState(false);
 
@@ -57,7 +66,8 @@ const JobActionsPanel: React.FC<Props> = ({
   }
 
   const expired = isExpired(job);
-  const needsApproval = token.allowance.lt(job.budget);
+  const needsApproval = token.allowance < job.budget;
+  const needsProvider = job.provider === zeroAddress;
   const disabled = pending || localLoading;
 
   const run = async (action: () => Promise<boolean>, clear?: () => void) => {
@@ -70,30 +80,65 @@ const JobActionsPanel: React.FC<Props> = ({
   };
 
   const handleSubmit = () => {
-    const error = validateBytes32Text(deliverableRef, "La referencia de entrega");
+    const error = validateDeliverableContent(deliverableContent);
     if (error) {
       setLocalError(error);
       return;
     }
-    run(() => onSubmit(job.id, deliverableRef), () => setDeliverableRef(""));
+    run(
+      () => onSubmit(job.id, deliverableContent),
+      () => setDeliverableContent("")
+    );
+  };
+
+  const handleSetProvider = () => {
+    if (!isAddress(providerAddress) || providerAddress === zeroAddress) {
+      setLocalError("Ingresá una dirección de proveedor válida y distinta de cero");
+      return;
+    }
+    run(
+      () => onSetProvider(job.id, providerAddress),
+      () => setProviderAddress("")
+    );
   };
 
   const handleComplete = () => {
-    const error = validateBytes32Text(reason, "La razón");
+    const error = validateBytes32Text(evaluatorReason, "La razón");
     if (error) {
       setLocalError(error);
       return;
     }
-    run(() => onComplete(job.id, reason), () => setReason(""));
+    run(
+      () => onComplete(job.id, evaluatorReason),
+      () => setEvaluatorReason("")
+    );
   };
 
-  const handleReject = () => {
-    const error = validateBytes32Text(reason, "La razón");
+  const handleEvaluatorReject = () => {
+    const error = validateBytes32Text(evaluatorReason, "La razón");
     if (error) {
       setLocalError(error);
       return;
     }
-    run(() => onReject(job.id, reason), () => setReason(""));
+    run(
+      () => onReject(job.id, evaluatorReason, true),
+      () => setEvaluatorReason("")
+    );
+  };
+
+  const handleClientReject = () => {
+    const error = validateBytes32Text(
+      clientRejectReason,
+      "El motivo del rechazo"
+    );
+    if (error) {
+      setLocalError(error);
+      return;
+    }
+    run(
+      () => onReject(job.id, clientRejectReason, false),
+      () => setClientRejectReason("")
+    );
   };
 
   return (
@@ -137,7 +182,29 @@ const JobActionsPanel: React.FC<Props> = ({
             Presupuesto requerido: {formatTokenAmount(job.budget, token.decimals, token.symbol)}
           </div>
 
-          {needsApproval ? (
+          {needsProvider ? (
+            <>
+              <div>
+                <label htmlFor="input-provider-address">
+                  Dirección del proveedor
+                </label>
+                <input
+                  id="input-provider-address"
+                  className="input input-mono"
+                  placeholder="0x..."
+                  value={providerAddress}
+                  onChange={(event) => setProviderAddress(event.target.value)}
+                />
+              </div>
+              <button
+                className="btn btn-primary w-full"
+                disabled={disabled}
+                onClick={handleSetProvider}
+              >
+                Asignar proveedor
+              </button>
+            </>
+          ) : needsApproval ? (
             <button
               className="btn btn-cyan w-full"
               disabled={disabled}
@@ -158,21 +225,58 @@ const JobActionsPanel: React.FC<Props> = ({
               Fondear escrow
             </button>
           )}
+
+          <div className="danger-zone">
+            <div>
+              <label htmlFor="client-reject-reason">
+                Motivo del rechazo
+              </label>
+              <input
+                id="client-reject-reason"
+                className="input"
+                placeholder="cancelled"
+                value={clientRejectReason}
+                onChange={(event) =>
+                  setClientRejectReason(event.target.value)
+                }
+              />
+            </div>
+            <p className="text-muted text-xs">
+              Esta acción es irreversible. Como el trabajo sigue abierto, no
+              mueve fondos.
+            </p>
+            <button
+              className="btn btn-danger w-full"
+              disabled={disabled}
+              onClick={handleClientReject}
+              style={{ justifyContent: "center" }}
+            >
+              {localLoading ? <span className="spinner" /> : "✕"}
+              Rechazar trabajo
+            </button>
+          </div>
         </div>
       )}
 
       {job.status === JobStatus.Funded && roles.isProvider && !expired && (
         <div className="flex flex-col gap-3">
           <div>
-            <label htmlFor="input-deliverable-ref">Referencia de entrega</label>
-            <input
-              id="input-deliverable-ref"
+            <label htmlFor="deliverable-content">
+              Contenido o URL de la entrega
+            </label>
+            <textarea
+              id="deliverable-content"
               className="input"
-              placeholder="delivery-v1"
-              value={deliverableRef}
-              onChange={(e) => setDeliverableRef(e.target.value)}
+              rows={6}
+              placeholder="Descripción, instrucciones, resultado o URL..."
+              value={deliverableContent}
+              onChange={(event) => setDeliverableContent(event.target.value)}
             />
           </div>
+          <p className="text-muted text-xs">
+            El contenido se guarda en este navegador. En blockchain solo se
+            registra su hash.
+          </p>
           <button className="btn btn-primary w-full" disabled={disabled} onClick={handleSubmit} style={{ justifyContent: "center" }}>
             {localLoading ? <span className="spinner" /> : "📦"}
             Registrar entrega
@@ -188,8 +292,8 @@ const JobActionsPanel: React.FC<Props> = ({
               id="input-result-reason"
               className="input"
               placeholder="approved"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
+              value={evaluatorReason}
+              onChange={(e) => setEvaluatorReason(e.target.value)}
             />
           </div>
 
@@ -200,7 +304,7 @@ const JobActionsPanel: React.FC<Props> = ({
             </button>
           )}
 
-          <button className="btn btn-danger w-full" disabled={disabled} onClick={handleReject} style={{ justifyContent: "center" }}>
+          <button className="btn btn-danger w-full" disabled={disabled} onClick={handleEvaluatorReject} style={{ justifyContent: "center" }}>
             {localLoading ? <span className="spinner" /> : "✕"}
             Rechazar
           </button>

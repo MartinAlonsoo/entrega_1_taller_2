@@ -1,259 +1,220 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { ethers } from "ethers";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useAccount,
+  useChainId,
+  usePublicClient,
+  useWriteContract,
+} from "wagmi";
+import { sepolia } from "wagmi/chains";
+import { parseEther, type Address, type Hex } from "viem";
 import MultiSigABI from "../abi/MultiSigABI";
-import { CONTRACT_ADDRESS, SEPOLIA_CHAIN_ID } from "../config";
+import {
+  marketplaceAddress,
+  multisigAddress,
+  paymentTokenAddress,
+} from "../lib/contracts";
+import { marketplaceKeys, multisigKeys, tokenKeys } from "../lib/queryKeys";
+import { contractErrorMessage } from "../lib/errors";
 
 export interface Proposal {
-  id: number;
-  to: string;
-  value: ethers.BigNumber;
-  data: string;
-  proposer: string;
-  approvalCount: number;
+  id: bigint;
+  to: Address;
+  value: bigint;
+  data: Hex;
+  proposer: Address;
+  approvalCount: bigint;
   executed: boolean;
   cancelled: boolean;
 }
 
 export interface MultisigState {
-  account: string | null;
+  account: Address | null;
   isSigner: boolean;
-  signers: string[];
-  threshold: number;
+  signers: readonly Address[];
+  threshold: bigint;
   proposals: Proposal[];
   loading: boolean;
   txPending: boolean;
   error: string | null;
-  contractAddress: string;
+  contractAddress: Address;
   isConnected: boolean;
   chainOk: boolean;
 }
 
-declare global {
-  interface Window {
-    ethereum?: any;
-  }
+function parseProposal(raw: any): Proposal {
+  return {
+    id: raw.id ?? raw[0],
+    to: raw.to ?? raw[1],
+    value: raw.value ?? raw[2],
+    data: raw.data ?? raw[3],
+    proposer: raw.proposer ?? raw[4],
+    approvalCount: raw.approvalCount ?? raw[5],
+    executed: raw.executed ?? raw[6],
+    cancelled: raw.cancelled ?? raw[7],
+  };
 }
 
 export function useMultisig() {
-  const [state, setState] = useState<MultisigState>({
-    account: null,
-    isSigner: false,
-    signers: [],
-    threshold: 0,
-    proposals: [],
-    loading: false,
-    txPending: false,
-    error: null,
-    contractAddress: CONTRACT_ADDRESS,
-    isConnected: false,
-    chainOk: false,
-  });
+  const { address, isConnected } = useAccount();
+  const chainId = useChainId();
+  const publicClient = usePublicClient();
+  const queryClient = useQueryClient();
+  const { writeContractAsync } = useWriteContract();
+  const [txPending, setTxPending] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const contractRef = useRef<ethers.Contract | null>(null);
-  const providerRef = useRef<ethers.providers.Web3Provider | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const queryKey = multisigKeys.state(multisigAddress, address);
+  const query = useQuery({
+    queryKey,
+    enabled: isConnected && chainId === sepolia.id && !!address && !!publicClient,
+    queryFn: async () => {
+      if (!publicClient || !address) {
+        return {
+          signers: [] as readonly Address[],
+          threshold: 0n,
+          proposals: [] as Proposal[],
+          isSigner: false,
+        };
+      }
 
-
-  const getContract = useCallback((signerOrProvider: any) => {
-    return new ethers.Contract(CONTRACT_ADDRESS, MultiSigABI, signerOrProvider);
-  }, []);
-
-  const setError = (msg: string) =>
-    setState((s) => ({ ...s, error: msg, txPending: false }));
-
-
-  const loadContractData = useCallback(async (account: string) => {
-    if (!providerRef.current) return;
-    try {
-      const contract = getContract(providerRef.current);
-      contractRef.current = contract;
-
-      const [signers, threshold, proposals, isSignerResult] = await Promise.all([
-        contract.getSigners(),
-        contract.threshold(),
-        contract.getAllProposals(),
-        contract.isSigner(account),
+      const [signers, threshold, proposals, isSigner] = await Promise.all([
+        publicClient.readContract({
+          address: multisigAddress,
+          abi: MultiSigABI,
+          functionName: "getSigners",
+        }),
+        publicClient.readContract({
+          address: multisigAddress,
+          abi: MultiSigABI,
+          functionName: "threshold",
+        }),
+        publicClient.readContract({
+          address: multisigAddress,
+          abi: MultiSigABI,
+          functionName: "getAllProposals",
+        }),
+        publicClient.readContract({
+          address: multisigAddress,
+          abi: MultiSigABI,
+          functionName: "isSigner",
+          args: [address],
+        }),
       ]);
 
-      const parsedProposals: Proposal[] = proposals.map((p: any) => ({
-        id: p.id.toNumber(),
-        to: p.to,
-        value: p.value,
-        data: p.data,
-        proposer: p.proposer,
-        approvalCount: p.approvalCount.toNumber(),
-        executed: p.executed,
-        cancelled: p.cancelled,
-      }));
-
-      setState((s) => ({
-        ...s,
+      return {
         signers,
-        threshold: threshold.toNumber(),
-        proposals: parsedProposals,
-        isSigner: isSignerResult,
-        loading: false,
-        error: null,
-      }));
-    } catch (err: any) {
-      console.error("Error loading contract data:", err);
-    }
-  }, [getContract]);
+        threshold,
+        proposals: proposals.map(parseProposal),
+        isSigner,
+      };
+    },
+  });
 
+  const invalidateMultisig = () =>
+    queryClient.invalidateQueries({ queryKey });
 
-  const connect = useCallback(async () => {
-    if (!window.ethereum) {
-      setError("MetaMask no encontrado. Por favor instala la extensión.");
-      return;
-    }
-
-    setState((s) => ({ ...s, loading: true, error: null }));
-
+  const execute = async (
+    request: Parameters<typeof writeContractAsync>[0],
+    refreshMarketplace = false
+  ) => {
+    if (!publicClient) return false;
+    setTxPending(true);
+    setActionError(null);
     try {
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
-      providerRef.current = provider;
-
-      await provider.send("eth_requestAccounts", []);
-      const signer = provider.getSigner();
-      const account = await signer.getAddress();
-      const network = await provider.getNetwork();
-      const chainOk = network.chainId === 11155111; // Sepolia
-
-      setState((s) => ({
-        ...s,
-        account,
-        isConnected: true,
-        chainOk,
-      }));
-
-      if (!chainOk) {
-        try {
-          await window.ethereum.request({
-            method: "wallet_switchEthereumChain",
-            params: [{ chainId: SEPOLIA_CHAIN_ID }],
+      const hash = await writeContractAsync(request);
+      await publicClient.waitForTransactionReceipt({ hash });
+      await invalidateMultisig();
+      if (refreshMarketplace) {
+        await queryClient.invalidateQueries({
+          queryKey: marketplaceKeys.jobs(marketplaceAddress),
+        });
+        if (address) {
+          await queryClient.invalidateQueries({
+            queryKey: tokenKeys.account(
+              paymentTokenAddress,
+              address,
+              marketplaceAddress
+            ),
           });
-          setState((s) => ({ ...s, chainOk: true }));
-        } catch {
-          setError("Por favor cambia a la red Sepolia en MetaMask.");
-          setState((s) => ({ ...s, loading: false }));
-          return;
         }
       }
-
-      await loadContractData(account);
-
-      if (pollRef.current) clearInterval(pollRef.current);
-      pollRef.current = setInterval(() => loadContractData(account), 6000);
-
-    } catch (err: any) {
-      setError(err.message || "Error al conectar wallet");
-      setState((s) => ({ ...s, loading: false }));
-    }
-  }, [loadContractData]);
-
-
-  useEffect(() => {
-    if (!window.ethereum) return;
-
-    const handleAccountsChanged = (accounts: string[]) => {
-      if (accounts.length === 0) {
-        setState((s) => ({ ...s, account: null, isConnected: false }));
-        if (pollRef.current) clearInterval(pollRef.current);
-      } else {
-        setState((s) => ({ ...s, account: accounts[0] }));
-        if (pollRef.current) clearInterval(pollRef.current);
-        loadContractData(accounts[0]);
-        pollRef.current = setInterval(() => loadContractData(accounts[0]), 6000);
-      }
-    };
-
-    const handleChainChanged = () => window.location.reload();
-
-    window.ethereum.on("accountsChanged", handleAccountsChanged);
-    window.ethereum.on("chainChanged", handleChainChanged);
-
-    return () => {
-      window.ethereum.removeListener("accountsChanged", handleAccountsChanged);
-      window.ethereum.removeListener("chainChanged", handleChainChanged);
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [loadContractData]);
-
-
-  const withTx = async <T>(fn: () => Promise<T>): Promise<T | null> => {
-    setState((s) => ({ ...s, txPending: true, error: null }));
-    try {
-      const result = await fn();
-      setState((s) => ({ ...s, txPending: false }));
-      if (state.account) await loadContractData(state.account);
-      return result;
-    } catch (err: any) {
-      const msg = err?.data?.message || err?.reason || err?.message || "Transacción fallida";
-      setError(msg);
-      return null;
-    }
-  };
-
-  const getSigner = () => {
-    if (!providerRef.current) throw new Error("No hay proveedor");
-    return providerRef.current.getSigner();
-  };
-
-  const propose = async (to: string, valueEth: string, data: string): Promise<boolean> => {
-    return !!(await withTx(async () => {
-      const signer = getSigner();
-      const contract = getContract(signer);
-      const value = ethers.utils.parseEther(valueEth || "0");
-      const calldata = data && data !== "0x" ? data : "0x";
-      const tx = await contract.propose(to, value, calldata);
-      await tx.wait();
-      if (state.account) await loadContractData(state.account);
       return true;
-    }));
-  };
-
-  const approve = async (proposalId: number): Promise<boolean> => {
-    return !!(await withTx(async () => {
-      const signer = getSigner();
-      const contract = getContract(signer);
-      const tx = await contract.approve(proposalId);
-      await tx.wait();
-      if (state.account) await loadContractData(state.account);
-      return true;
-    }));
-  };
-
-  const execute = async (proposalId: number): Promise<boolean> => {
-    return !!(await withTx(async () => {
-      const signer = getSigner();
-      const contract = getContract(signer);
-      const tx = await contract.execute(proposalId);
-      await tx.wait();
-      if (state.account) await loadContractData(state.account);
-      return true;
-    }));
-  };
-
-  const cancel = async (proposalId: number): Promise<boolean> => {
-    return !!(await withTx(async () => {
-      const signer = getSigner();
-      const contract = getContract(signer);
-      const tx = await contract.cancel(proposalId);
-      await tx.wait();
-      if (state.account) await loadContractData(state.account);
-      return true;
-    }));
-  };
-
-  const hasApproved = async (proposalId: number, account: string): Promise<boolean> => {
-    if (!providerRef.current) return false;
-    try {
-      const contract = getContract(providerRef.current);
-      return await contract.hasApproved(proposalId, account);
-    } catch {
+    } catch (error) {
+      setActionError(contractErrorMessage(error, "Transacción MultiSig fallida"));
       return false;
+    } finally {
+      setTxPending(false);
     }
   };
 
-  return { state, connect, propose, approve, execute, cancel, hasApproved };
+  const data = query.data;
+  const proposals = data?.proposals ?? [];
+  const state: MultisigState = {
+    account: address ?? null,
+    isSigner: data?.isSigner ?? false,
+    signers: data?.signers ?? [],
+    threshold: data?.threshold ?? 0n,
+    proposals,
+    loading: query.isLoading || query.isFetching,
+    txPending,
+    error:
+      actionError ||
+      (query.error
+        ? contractErrorMessage(query.error, "Error al cargar MultiSig")
+        : null),
+    contractAddress: multisigAddress,
+    isConnected,
+    chainOk: chainId === sepolia.id,
+  };
+
+  return {
+    state,
+    pendingProposalCount: proposals.filter(
+      (proposal) => !proposal.executed && !proposal.cancelled
+    ).length,
+    refresh: async () => {
+      await query.refetch();
+    },
+    propose: (to: Address, valueEth: string, dataHex: Hex) =>
+      execute({
+        address: multisigAddress,
+        abi: MultiSigABI,
+        functionName: "propose",
+        args: [to, parseEther(valueEth || "0"), dataHex || "0x"],
+      }),
+    approve: (proposalId: bigint) =>
+      execute({
+        address: multisigAddress,
+        abi: MultiSigABI,
+        functionName: "approve",
+        args: [proposalId],
+      }),
+    execute: (proposalId: bigint) =>
+      execute(
+        {
+          address: multisigAddress,
+          abi: MultiSigABI,
+          functionName: "execute",
+          args: [proposalId],
+        },
+        true
+      ),
+    cancel: (proposalId: bigint) =>
+      execute({
+        address: multisigAddress,
+        abi: MultiSigABI,
+        functionName: "cancel",
+        args: [proposalId],
+      }),
+    hasApproved: async (proposalId: bigint, account: Address) => {
+      if (!publicClient) return false;
+      return publicClient.readContract({
+        address: multisigAddress,
+        abi: MultiSigABI,
+        functionName: "hasApproved",
+        args: [proposalId, account],
+      });
+    },
+  };
 }

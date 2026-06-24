@@ -13,6 +13,19 @@ export const MARKETPLACE_ADDRESS =
 export const PAYMENT_TOKEN_ADDRESS =
   import.meta.env.VITE_PAYMENT_TOKEN_ADDRESS?.trim() || "";
 
+const marketplaceDeploymentBlockValue =
+  import.meta.env.VITE_MARKETPLACE_DEPLOYMENT_BLOCK?.trim() || "";
+
+if (!/^\d+$/.test(marketplaceDeploymentBlockValue)) {
+  throw new Error(
+    "VITE_MARKETPLACE_DEPLOYMENT_BLOCK debe ser un bloque numérico"
+  );
+}
+
+export const MARKETPLACE_DEPLOYMENT_BLOCK = BigInt(
+  marketplaceDeploymentBlockValue
+);
+
 export const SEPOLIA_CHAIN_ID = "0xaa36a7"; // 11155111 en hex
 
 export const SEPOLIA_RPC = "https://rpc.sepolia.org";

@@ -13,10 +13,10 @@ type JobFilter =
 
 interface Props {
   jobs: Job[];
-  selectedJobId: number | null;
+  selectedJobId: bigint | null;
   tokenDecimals: number;
   tokenSymbol: string;
-  onSelectJob: (id: number) => void;
+  onSelectJob: (id: bigint) => void;
 }
 
 const filterToStatus: Record<Exclude<JobFilter, "all">, JobStatus> = {
@@ -129,7 +129,7 @@ const JobBoard: React.FC<Props> = ({
       >
         {sorted.map((job) => (
           <JobCard
-            key={job.id}
+            key={job.id.toString()}
             job={job}
             selected={selectedJobId === job.id}
             tokenDecimals={tokenDecimals}

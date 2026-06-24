@@ -1,17 +1,18 @@
 import React, { useEffect, useState } from "react";
-import { ethers } from "ethers";
+import { formatEther, type Address } from "viem";
 import { Proposal } from "../hooks/useMultisig";
+import { decodeMarketplaceCall } from "../utils/marketplaceCalldata";
 
 interface Props {
   proposal: Proposal;
-  account: string | null;
+  account: Address | null;
   isSigner: boolean;
-  threshold: number;
+  threshold: bigint;
   txPending: boolean;
-  hasApproved: (id: number, account: string) => Promise<boolean>;
-  onApprove: (id: number) => Promise<boolean>;
-  onExecute: (id: number) => Promise<boolean>;
-  onCancel: (id: number) => Promise<boolean>;
+  hasApproved: (id: bigint, account: Address) => Promise<boolean>;
+  onApprove: (id: bigint) => Promise<boolean>;
+  onExecute: (id: bigint) => Promise<boolean>;
+  onCancel: (id: bigint) => Promise<boolean>;
 }
 
 function shortenAddr(addr: string) {
@@ -42,7 +43,11 @@ const ProposalCard: React.FC<Props> = ({
   const isPending = !proposal.executed && !proposal.cancelled;
   const reachedThreshold = proposal.approvalCount >= threshold;
   const isProposer = account?.toLowerCase() === proposal.proposer.toLowerCase();
-  const progress = Math.min((proposal.approvalCount / threshold) * 100, 100);
+  const progress =
+    threshold === 0n
+      ? 0
+      : Math.min(Number((proposal.approvalCount * 100n) / threshold), 100);
+  const marketplaceCall = decodeMarketplaceCall(proposal.to, proposal.data);
 
   useEffect(() => {
     if (account && isPending) {
@@ -60,7 +65,7 @@ const ProposalCard: React.FC<Props> = ({
 
   return (
     <div
-      id={`proposal-${proposal.id}`}
+      id={`proposal-${proposal.id.toString()}`}
       className="card animate-in"
       style={{
         borderColor: isPending
@@ -85,7 +90,7 @@ const ProposalCard: React.FC<Props> = ({
               fontWeight: 700,
             }}
           >
-            #{proposal.id}
+            #{proposal.id.toString()}
           </span>
           <span className={`badge ${status.cls}`}>
             <span
@@ -111,6 +116,27 @@ const ProposalCard: React.FC<Props> = ({
         </span>
       </div>
 
+      {marketplaceCall && (
+        <div
+          style={{
+            background: "rgba(6, 182, 212, 0.08)",
+            border: "1px solid rgba(6, 182, 212, 0.22)",
+            borderRadius: "var(--radius-sm)",
+            padding: "0.625rem 0.875rem",
+            marginBottom: "0.875rem",
+          }}
+        >
+          <div className="text-xs text-cyan mb-2">Acción Marketplace</div>
+          <div className="text-sm">
+            {marketplaceCall.functionName === "complete" ? "Completar" : "Rechazar"}{" "}
+            trabajo <strong>#{marketplaceCall.jobId.toString()}</strong>
+          </div>
+          <div className="text-xs text-muted mt-1">
+            Razón: <span className="font-mono">{marketplaceCall.reason}</span>
+          </div>
+        </div>
+      )}
+
       <div
         style={{
           background: "var(--color-surface-2)",
@@ -131,7 +157,7 @@ const ProposalCard: React.FC<Props> = ({
             className="font-mono text-xs"
             style={{ color: "var(--color-accent-2)", fontWeight: 700 }}
           >
-            {ethers.utils.formatEther(proposal.value)} ETH
+            {formatEther(proposal.value)} ETH
           </span>
         </div>
         {proposal.data && proposal.data !== "0x" && (
@@ -148,7 +174,7 @@ const ProposalCard: React.FC<Props> = ({
         <div className="flex items-center justify-between mb-2">
           <span className="text-muted text-xs">Aprobaciones</span>
           <span className="font-mono text-xs" style={{ fontWeight: 700, color: reachedThreshold ? "var(--color-success)" : "var(--color-text)" }}>
-            {proposal.approvalCount} / {threshold}
+            {proposal.approvalCount.toString()} / {threshold.toString()}
             {reachedThreshold && " ✓"}
           </span>
         </div>
@@ -160,7 +186,7 @@ const ProposalCard: React.FC<Props> = ({
       {isPending && (
         <div className="flex gap-2" style={{ flexWrap: "wrap" }}>
           <button
-            id={`btn-approve-${proposal.id}`}
+            id={`btn-approve-${proposal.id.toString()}`}
             className="btn btn-cyan btn-sm"
             disabled={disabled || alreadyApproved || !isSigner}
             onClick={() => handleAction(() => onApprove(proposal.id))}
@@ -172,13 +198,13 @@ const ProposalCard: React.FC<Props> = ({
           </button>
 
           <button
-            id={`btn-execute-${proposal.id}`}
+            id={`btn-execute-${proposal.id.toString()}`}
             className="btn btn-success btn-sm"
             disabled={disabled || !reachedThreshold || !isSigner}
             onClick={() => handleAction(() => onExecute(proposal.id))}
             title={
               !reachedThreshold
-                ? `Faltan ${threshold - proposal.approvalCount} aprobaciones`
+                ? `Faltan ${(threshold - proposal.approvalCount).toString()} aprobaciones`
                 : "Ejecutar propuesta"
             }
             style={{ flex: 1, justifyContent: "center" }}
@@ -189,7 +215,7 @@ const ProposalCard: React.FC<Props> = ({
 
           {isProposer && (
             <button
-              id={`btn-cancel-${proposal.id}`}
+              id={`btn-cancel-${proposal.id.toString()}`}
               className="btn btn-danger btn-sm"
               disabled={disabled}
               onClick={() => handleAction(() => onCancel(proposal.id))}

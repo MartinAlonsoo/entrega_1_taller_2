@@ -1,43 +1,46 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { ethers } from "ethers";
+import {
+  encodeFunctionData,
+  stringToHex,
+  type Address,
+} from "viem";
 import JobMarketplaceABI from "../abi/JobMarketplaceABI";
-import { MARKETPLACE_ADDRESS, MULTISIG_ADDRESS } from "../config";
+import { Job, JobStatus } from "../hooks/useJobs";
+import { marketplaceAddress, multisigAddress } from "../lib/contracts";
+import { NewMultisigProposalDraft } from "../types/multisig";
 
 interface Props {
-  selectedJobId: number | null;
+  selectedJobId: bigint | null;
+  selectedJob: Job | null;
   defaultReason?: string;
+  onCreateProposal: (draft: NewMultisigProposalDraft) => void;
 }
 
-function shortenAddr(addr: string) {
-  if (!addr) return "Sin configurar";
-  return `${addr.slice(0, 10)}…${addr.slice(-6)}`;
+function shortenAddr(address: Address) {
+  return `${address.slice(0, 10)}…${address.slice(-6)}`;
 }
 
-const CopyButton: React.FC<{ value: string; title: string }> = ({ value, title }) => (
+const CopyButton: React.FC<{ value: string; title: string }> = ({
+  value,
+  title,
+}) => (
   <button
     className="btn btn-secondary btn-sm"
     disabled={!value}
     onClick={() => navigator.clipboard.writeText(value)}
     title={title}
-    style={{ flexShrink: 0 }}
   >
     📋
   </button>
 );
 
-const AddressRow: React.FC<{ label: string; address: string }> = ({ label, address }) => (
+const AddressRow: React.FC<{ label: string; address: Address }> = ({
+  label,
+  address,
+}) => (
   <div className="mb-3">
     <label>{label}</label>
-    <div
-      className="input input-mono"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: "0.5rem",
-        padding: "0.625rem 0.875rem",
-      }}
-    >
+    <div className="input input-mono flex items-center justify-between">
       <span className="address">{shortenAddr(address)}</span>
       <CopyButton value={address} title={`Copiar ${label}`} />
     </div>
@@ -46,136 +49,114 @@ const AddressRow: React.FC<{ label: string; address: string }> = ({ label, addre
 
 const MultisigEvaluatorHelper: React.FC<Props> = ({
   selectedJobId,
+  selectedJob,
   defaultReason = "approved",
+  onCreateProposal,
 }) => {
   const [jobId, setJobId] = useState("");
   const [reason, setReason] = useState(defaultReason);
 
   useEffect(() => {
-    if (selectedJobId !== null) setJobId(String(selectedJobId));
+    if (selectedJobId !== null) setJobId(selectedJobId.toString());
   }, [selectedJobId]);
 
-  const { calldata, error } = useMemo(() => {
-    if (!MARKETPLACE_ADDRESS) {
-      return { calldata: "", error: "VITE_MARKETPLACE_ADDRESS no está configurada" };
-    }
-
-    if (!MULTISIG_ADDRESS) {
-      return { calldata: "", error: "VITE_MULTISIG_ADDRESS no está configurada" };
-    }
-
-    const parsedJobId = Number(jobId);
-    if (!jobId || parsedJobId < 0 || !Number.isInteger(parsedJobId)) {
-      return { calldata: "", error: "jobId debe ser un entero mayor o igual a 0" };
-    }
-
-    if (!reason.trim()) {
-      return { calldata: "", error: "reason es obligatorio" };
-    }
-
+  const result = useMemo(() => {
     try {
-      const reasonBytes32 = ethers.utils.formatBytes32String(reason.trim());
-      const iface = new ethers.utils.Interface(JobMarketplaceABI as any);
+      const parsedJobId = BigInt(jobId);
+      const trimmedReason = reason.trim();
+      if (!trimmedReason) throw new Error("reason es obligatorio");
+      if (new TextEncoder().encode(trimmedReason).length > 31) {
+        throw new Error("reason debe tener 31 bytes o menos");
+      }
+
       return {
-        calldata: iface.encodeFunctionData("complete", [parsedJobId, reasonBytes32]),
+        calldata: encodeFunctionData({
+          abi: JobMarketplaceABI,
+          functionName: "complete",
+          args: [parsedJobId, stringToHex(trimmedReason, { size: 32 })],
+        }),
         error: "",
+        parsedJobId,
       };
-    } catch {
-      return { calldata: "", error: "reason debe tener 31 bytes o menos" };
+    } catch (error) {
+      return {
+        calldata: null,
+        error:
+          error instanceof Error
+            ? error.message
+            : "jobId debe ser un entero mayor o igual a 0",
+        parsedJobId: 0n,
+      };
     }
   }, [jobId, reason]);
+
+  const evaluatorIsMultisig =
+    selectedJob?.evaluator.toLowerCase() === multisigAddress.toLowerCase();
+  const jobCanComplete = selectedJob?.status === JobStatus.Submitted;
 
   return (
     <div className="card animate-in">
       <div className="flex items-center gap-2 mb-4">
-        <span style={{ fontSize: "1.1rem" }}>🛡️</span>
+        <span>🛡️</span>
         <h2>MultiSig evaluator</h2>
       </div>
 
-      <p className="text-muted text-sm mb-4">
-        Usa este helper para crear el calldata de <span className="font-mono">complete(jobId, reason)</span> y pegarlo en una propuesta del MultiSig.
-      </p>
-
-      <AddressRow label="MultiSig evaluador" address={MULTISIG_ADDRESS} />
-      <AddressRow label="Contrato Marketplace" address={MARKETPLACE_ADDRESS} />
+      <AddressRow label="MultiSig evaluador" address={multisigAddress} />
+      <AddressRow label="Contrato Marketplace" address={marketplaceAddress} />
 
       <div className="divider" />
-
       <div className="flex flex-col gap-3">
         <div>
           <label htmlFor="input-helper-job-id">jobId</label>
           <input
             id="input-helper-job-id"
             className="input input-mono"
-            placeholder="0"
             value={jobId}
-            onChange={(e) => setJobId(e.target.value)}
+            onChange={(event) => setJobId(event.target.value)}
           />
         </div>
-
         <div>
           <label htmlFor="input-helper-reason">reason</label>
           <input
             id="input-helper-reason"
             className="input"
-            placeholder="approved"
             value={reason}
-            onChange={(e) => setReason(e.target.value)}
+            onChange={(event) => setReason(event.target.value)}
           />
         </div>
       </div>
 
-      {error && (
-        <div
-          className="mt-3"
-          style={{
-            padding: "0.625rem 0.875rem",
-            background: "rgba(245, 158, 11, 0.1)",
-            border: "1px solid rgba(245, 158, 11, 0.25)",
-            borderRadius: "var(--radius-sm)",
-            color: "#fbbf24",
-            fontSize: "0.85rem",
-          }}
-        >
-          ⚠️ {error}
+      {(result.error || (selectedJob && (!evaluatorIsMultisig || !jobCanComplete))) && (
+        <div className="mt-3 text-sm" style={{ color: "#fbbf24" }}>
+          ⚠️{" "}
+          {result.error ||
+            (!evaluatorIsMultisig
+              ? "El evaluador del trabajo no es este MultiSig."
+              : "El trabajo debe estar Submitted.")}
         </div>
       )}
 
       <div className="divider" />
-
-      <label>Calldata para propuesta MultiSig</label>
-      <div
-        className="input input-mono"
-        style={{
-          minHeight: "5.5rem",
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: "0.5rem",
-          padding: "0.625rem 0.875rem",
-        }}
+      <label>Calldata</label>
+      <div className="input input-mono" style={{ wordBreak: "break-all" }}>
+        {result.calldata || "Completá valores válidos"}
+      </div>
+      <button
+        className="btn btn-primary w-full mt-3"
+        disabled={!result.calldata}
+        onClick={() =>
+          result.calldata &&
+          onCreateProposal({
+            to: marketplaceAddress,
+            value: "0",
+            data: result.calldata,
+            sourceJobId: result.parsedJobId,
+            reason: reason.trim(),
+          })
+        }
       >
-        <span style={{ wordBreak: "break-all", color: calldata ? "var(--color-accent-3)" : "var(--color-text-dim)" }}>
-          {calldata || "Completa jobId y reason válidos para generar calldata"}
-        </span>
-        <CopyButton value={calldata} title="Copiar calldata" />
-      </div>
-
-      <div className="divider" />
-
-      <div className="flex flex-col gap-2 text-sm text-muted">
-        <span>En la UI MultiSig crea una propuesta con:</span>
-        <span>
-          <strong>to:</strong> <span className="font-mono">{shortenAddr(MARKETPLACE_ADDRESS)}</span>
-        </span>
-        <span>
-          <strong>value:</strong> <span className="font-mono">0</span>
-        </span>
-        <span>
-          <strong>data:</strong> el calldata generado arriba
-        </span>
-        <span>Luego aprobar hasta el threshold y ejecutar la propuesta.</span>
-      </div>
+        Crear propuesta MultiSig
+      </button>
     </div>
   );
 };

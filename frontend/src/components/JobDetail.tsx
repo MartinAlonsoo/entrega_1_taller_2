@@ -1,13 +1,16 @@
 import React from "react";
-import { ethers } from "ethers";
+import { zeroHash } from "viem";
 import { Job, JobRoles } from "../hooks/useJobs";
+import type { StoredDeliverable } from "../lib/deliverables";
 import { formatDate, formatTokenAmount, getJobStatus, shortenAddr } from "./JobCard";
+import DeliverableDetail from "./DeliverableDetail";
 
 interface Props {
   job: Job | null;
   roles: JobRoles;
   tokenDecimals: number;
   tokenSymbol: string;
+  deliverable: StoredDeliverable | null;
 }
 
 const RoleBadge: React.FC<{ active: boolean; label: string }> = ({ active, label }) => (
@@ -16,7 +19,13 @@ const RoleBadge: React.FC<{ active: boolean; label: string }> = ({ active, label
   </span>
 );
 
-const JobDetail: React.FC<Props> = ({ job, roles, tokenDecimals, tokenSymbol }) => {
+const JobDetail: React.FC<Props> = ({
+  job,
+  roles,
+  tokenDecimals,
+  tokenSymbol,
+  deliverable,
+}) => {
   if (!job) {
     return (
       <div className="card animate-in" style={{ textAlign: "center", color: "var(--color-text-muted)" }}>
@@ -33,8 +42,7 @@ const JobDetail: React.FC<Props> = ({ job, roles, tokenDecimals, tokenSymbol }) 
     ["Evaluador", shortenAddr(job.evaluator), job.evaluator],
     ["Proveedor", shortenAddr(job.provider), job.provider],
     ["Vencimiento", formatDate(job.expiresAt), ""],
-    ["Entrega", job.deliverableRef === ethers.constants.HashZero ? "Sin entrega" : job.deliverableRef, job.deliverableRef],
-    ["Resultado", job.resultReason === ethers.constants.HashZero ? "Sin resultado" : job.resultReason, job.resultReason],
+    ["Resultado", job.resultReason === zeroHash ? "Sin resultado" : job.resultReason, job.resultReason],
   ];
 
   return (
@@ -42,7 +50,7 @@ const JobDetail: React.FC<Props> = ({ job, roles, tokenDecimals, tokenSymbol }) 
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <span style={{ fontSize: "1.1rem" }}>🧾</span>
-          <h2>Trabajo #{job.id}</h2>
+          <h2>Trabajo #{job.id.toString()}</h2>
         </div>
         <span className={`badge ${status.cls}`}>
           <span className="dot" style={{ background: status.color }} />
@@ -82,6 +90,11 @@ const JobDetail: React.FC<Props> = ({ job, roles, tokenDecimals, tokenSymbol }) 
           </div>
         ))}
       </div>
+
+      <DeliverableDetail
+        deliverableRef={job.deliverableRef}
+        deliverable={deliverable}
+      />
     </div>
   );
 };

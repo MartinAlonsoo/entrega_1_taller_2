@@ -1,5 +1,5 @@
 import React from "react";
-import { ethers } from "ethers";
+import { formatUnits, zeroAddress } from "viem";
 import { Job, JobStatus } from "../hooks/useJobs";
 
 interface Props {
@@ -7,16 +7,16 @@ interface Props {
   selected: boolean;
   tokenDecimals: number;
   tokenSymbol: string;
-  onSelect: (id: number) => void;
+  onSelect: (id: bigint) => void;
 }
 
 export function shortenAddr(addr: string) {
-  if (!addr || addr === ethers.constants.AddressZero) return "Sin asignar";
+  if (!addr || addr === zeroAddress) return "Sin asignar";
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
-export function formatDate(timestamp: number) {
-  return new Date(timestamp * 1000).toLocaleString();
+export function formatDate(timestamp: bigint) {
+  return new Date(Number(timestamp) * 1000).toLocaleString();
 }
 
 export function getJobStatus(status: JobStatus) {
@@ -33,11 +33,11 @@ export function getJobStatus(status: JobStatus) {
 }
 
 export function formatTokenAmount(
-  amount: ethers.BigNumber,
+  amount: bigint,
   decimals: number,
   symbol: string
 ) {
-  const formatted = ethers.utils.formatUnits(amount, decimals || 18);
+  const formatted = formatUnits(amount, decimals || 18);
   const compact = Number(formatted).toLocaleString(undefined, {
     maximumFractionDigits: 4,
   });
@@ -52,11 +52,11 @@ const JobCard: React.FC<Props> = ({
   onSelect,
 }) => {
   const status = getJobStatus(job.status);
-  const expired = Date.now() / 1000 > job.expiresAt;
+  const expired = BigInt(Math.floor(Date.now() / 1000)) > job.expiresAt;
 
   return (
     <button
-      id={`job-${job.id}`}
+      id={`job-${job.id.toString()}`}
       className="card animate-in"
       onClick={() => onSelect(job.id)}
       style={{
@@ -82,7 +82,7 @@ const JobCard: React.FC<Props> = ({
               fontWeight: 700,
             }}
           >
-            #{job.id}
+            #{job.id.toString()}
           </span>
           <span className={`badge ${status.cls}`}>
             <span className="dot" style={{ background: status.color }} />

@@ -52,6 +52,116 @@ body {
   background-attachment: fixed;
 }
 
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  min-height: 68px;
+  padding: 0.65rem 1.5rem;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 1rem;
+  background: rgba(8, 11, 20, 0.92);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.app-brand-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #10b981, #06b6d4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.35);
+}
+
+.app-tabs {
+  display: flex;
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+.app-tabs button {
+  border: 1px solid transparent;
+  border-radius: 9999px;
+  padding: 0.45rem 0.9rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: 600 0.82rem var(--font-sans);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.app-tabs button:hover:not(:disabled) {
+  color: var(--color-text);
+  background: var(--color-surface-2);
+}
+
+.app-tabs button.active {
+  color: #fff;
+  border-color: rgba(6, 182, 212, 0.3);
+  background: linear-gradient(
+    135deg,
+    rgba(16, 185, 129, 0.18),
+    rgba(6, 182, 212, 0.18)
+  );
+}
+
+.app-tabs button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.tab-count {
+  min-width: 1.2rem;
+  height: 1.2rem;
+  padding: 0 0.3rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  font-size: 0.68rem;
+}
+
+.app-layout {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.welcome-layout {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 4rem 1.5rem;
+}
+
+.network-warning {
+  padding: 0.75rem 1.5rem;
+  text-align: center;
+  color: #fbbf24;
+  font-size: 0.875rem;
+  background: rgba(245, 158, 11, 0.08);
+  border-bottom: 1px solid rgba(245, 158, 11, 0.2);
+}
+
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(139, 92, 246, 0.3); border-radius: 3px; }
@@ -339,3 +449,97 @@ label {
 .mb-4 { margin-bottom: 1rem; }
 .grid { display: grid; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.danger-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(239, 68, 68, 0.28);
+}
+
+.deliverable-panel {
+  margin-top: 1rem;
+  padding: 0.875rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+}
+
+.deliverable-ref {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.625rem;
+}
+
+.deliverable-content {
+  margin: 0.75rem 0;
+  max-height: 18rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 0.75rem;
+  border-radius: var(--radius-sm);
+  background: rgba(2, 6, 23, 0.45);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+
+.deliverable-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+}
+
+@media (max-width: 900px) {
+  .app-header {
+    grid-template-columns: auto 1fr;
+  }
+
+  .app-tabs {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  .app-header > :last-child {
+    justify-self: end;
+  }
+
+  .app-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .app-layout aside {
+    order: -1;
+  }
+}
+
+@media (max-width: 620px) {
+  .app-header {
+    padding: 0.75rem 1rem;
+  }
+
+  .app-brand h1,
+  .app-brand p {
+    display: none;
+  }
+
+  .app-tabs button {
+    padding: 0.4rem 0.7rem;
+  }
+
+  .app-layout {
+    padding: 1.25rem 1rem;
+  }
+}

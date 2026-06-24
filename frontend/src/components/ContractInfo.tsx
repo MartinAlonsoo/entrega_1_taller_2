@@ -1,17 +1,16 @@
 import React from "react";
-import { CONTRACT_ADDRESS } from "../config";
-
+import type { Address } from "viem";
 interface Props {
-  signers: string[];
-  threshold: number;
-  contractAddress: string;
+  signers: readonly Address[];
+  threshold: bigint;
+  contractAddress: Address;
 }
 
 function shortenAddr(addr: string) {
   return `${addr.slice(0, 10)}…${addr.slice(-6)}`;
 }
 
-const ContractInfo: React.FC<Props> = ({ signers, threshold }) => {
+const ContractInfo: React.FC<Props> = ({ signers, threshold, contractAddress }) => {
   return (
     <div className="card animate-in">
       <div className="flex items-center gap-2 mb-4">
@@ -33,13 +32,13 @@ const ContractInfo: React.FC<Props> = ({ signers, threshold }) => {
           }}
         >
           <span style={{ color: "var(--color-accent-3)", fontSize: "0.78rem", wordBreak: "break-all" }}>
-            {CONTRACT_ADDRESS}
+            {contractAddress}
           </span>
           <button
             id="btn-copy-address"
             className="btn btn-secondary btn-sm"
             style={{ flexShrink: 0 }}
-            onClick={() => navigator.clipboard.writeText(CONTRACT_ADDRESS)}
+            onClick={() => navigator.clipboard.writeText(contractAddress)}
             title="Copiar dirección"
           >
             📋
@@ -61,7 +60,7 @@ const ContractInfo: React.FC<Props> = ({ signers, threshold }) => {
           color: "var(--color-accent-3)",
           fontSize: "0.9rem",
         }}>
-          {threshold} de {signers.length}
+          {threshold.toString()} de {signers.length}
         </span>
       </div>
 
@@ -127,11 +126,11 @@ const ContractInfo: React.FC<Props> = ({ signers, threshold }) => {
       </div>
 
       {/* Sepolia link */}
-      {(CONTRACT_ADDRESS as string).length > 0 && (
+      {contractAddress.length > 0 && (
         <>
           <div className="divider" />
           <a
-            href={`https://sepolia.etherscan.io/address/${CONTRACT_ADDRESS}`}
+            href={`https://sepolia.etherscan.io/address/${contractAddress}`}
             target="_blank"
             rel="noopener noreferrer"
             className="btn btn-secondary btn-sm"

@@ -76,9 +76,12 @@ async function main() {
 
   const JobMarketplace = await ethers.getContractFactory("JobMarketplace");
   const marketplace = await JobMarketplace.deploy(paymentTokenAddress);
-  await marketplace.deployed();
+  const deployReceipt = await marketplace.deployTransaction.wait();
 
   console.log(`JobMarketplace desplegado en: ${marketplace.address}`);
+  console.log(
+    `Bloque de deploy: ${deployReceipt.blockNumber}`
+  );
   console.log(`Payment token: ${paymentTokenAddress}\n`);
 
   const exampleReason = ethers.utils.formatBytes32String("approved");
@@ -94,6 +97,9 @@ async function main() {
   console.log("Variables para .env:");
   console.log(`PAYMENT_TOKEN_ADDRESS=${paymentTokenAddress}`);
   console.log(`VITE_MARKETPLACE_ADDRESS=${marketplace.address}`);
+  console.log(
+    `VITE_MARKETPLACE_DEPLOYMENT_BLOCK=${deployReceipt.blockNumber}`
+  );
   console.log(`VITE_PAYMENT_TOKEN_ADDRESS=${paymentTokenAddress}`);
 
   if (multisigAddress) {

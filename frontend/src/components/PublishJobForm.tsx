@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ethers } from "ethers";
+import { isAddress, parseUnits, zeroAddress, type Address } from "viem";
 import { JobActionInput } from "../hooks/useJobActions";
 
 interface Props {
@@ -30,10 +30,10 @@ const PublishJobForm: React.FC<Props> = ({
     if (!budget || isNaN(Number(budget)) || Number(budget) <= 0) {
       return "El presupuesto debe ser un número mayor a 0";
     }
-    if (!ethers.utils.isAddress(evaluator)) {
+    if (!isAddress(evaluator)) {
       return "La dirección del evaluador no es válida";
     }
-    if (provider && !ethers.utils.isAddress(provider)) {
+    if (provider && !isAddress(provider)) {
       return "La dirección del proveedor no es válida";
     }
     if (!expiresAt) return "La fecha de vencimiento es obligatoria";
@@ -60,10 +60,10 @@ const PublishJobForm: React.FC<Props> = ({
 
     const ok = await onCreateJob({
       description: description.trim(),
-      budget: ethers.utils.parseUnits(budget, tokenDecimals || 18),
-      evaluator,
-      provider: provider || ethers.constants.AddressZero,
-      expiresAt: Math.floor(new Date(expiresAt).getTime() / 1000),
+      budget: parseUnits(budget, tokenDecimals || 18),
+      evaluator: evaluator as Address,
+      provider: (provider || zeroAddress) as Address,
+      expiresAt: BigInt(Math.floor(new Date(expiresAt).getTime() / 1000)),
     });
 
     setSubmitting(false);

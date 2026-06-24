@@ -16,11 +16,13 @@ El contrato `MultiSig.sol` de Entrega 2 se reutiliza como evaluador. Si un traba
 
 - Solidity `0.8.4`
 - Hardhat `2.6.8`
-- ethers `v5`
-- React `18`
+- wagmi `v2`
+- viem `v2`
+- RainbowKit `v2`
+- TanStack React Query `v5`
+- React `19`
 - Vite
 - TypeScript
-- MetaMask
 - Sepolia Testnet
 
 ## Arquitectura general
@@ -31,7 +33,9 @@ flowchart TD
     C -->|approve ERC-20| T[Payment Token]
     C -->|fund| M
     M -->|transferFrom| T
-    P[Proveedor] -->|submit| M
+    P[Proveedor] -->|guarda contenido| L[localStorage]
+    L -->|keccak256 bytes32| P
+    P -->|submit hash| M
     E[Evaluador o MultiSig] -->|complete/reject| M
     M -->|pago o reembolso| T
 ```
@@ -68,7 +72,8 @@ sequenceDiagram
     C->>M: createJob(description, budget, evaluator, provider, expiresAt)
     C->>T: approve(Marketplace, budget)
     C->>M: fund(jobId)
-    P->>M: submit(jobId, deliverableRef)
+    P->>P: guardar contenido en localStorage
+    P->>M: submit(jobId, keccak256 del contenido)
     E->>M: complete(jobId, reason)
     M->>T: transfer(provider, budget)
 ```
@@ -82,13 +87,13 @@ Para usar el MultiSig como evaluador:
 3. En el frontend, al publicar un trabajo, usar el botón `Usar MultiSig` en el campo evaluador.
 4. El trabajo queda creado con `evaluator = VITE_MULTISIG_ADDRESS`.
 5. Cuando el proveedor haga `submit`, abrir el panel `MultiSig evaluator`.
-6. Generar calldata para `complete(jobId, reason)`.
-7. En una UI/flujo MultiSig, crear una propuesta con:
+6. Generar calldata para `complete(jobId, reason)` y presionar `Crear propuesta MultiSig`.
+7. La aplicación abre la pestaña `Administración MultiSig` con una propuesta precargada:
    - `to = VITE_MARKETPLACE_ADDRESS`
    - `value = 0`
    - `data = calldata generado`
-8. Aprobar hasta alcanzar `threshold`.
-9. Ejecutar la propuesta.
+8. Crear la propuesta, aprobarla con los signers hasta alcanzar `threshold` y ejecutarla.
+9. Volver al Marketplace y verificar que el job quedó completado y el proveedor recibió el pago.
 
 ```mermaid
 sequenceDiagram
@@ -104,7 +109,8 @@ sequenceDiagram
     MS->>M: complete(jobId, reason)
 ```
 
-El helper del frontend genera calldata, pero no ejecuta `propose`, `approve` ni `execute`.
+El helper no firma automáticamente. La pestaña integrada permite revisar y ejecutar
+`propose`, `approve` y `execute` usando la misma sesión de wallet.
 
 ## Token ERC-20 de pago
 
@@ -152,7 +158,7 @@ entrega_1_taller_2/
 │   │   │   ├── useJobs.ts
 │   │   │   ├── useMarketplace.ts
 │   │   │   ├── useMultisig.ts
-│   │   │   └── useWallet.ts
+│   │   │   └── useJobActions.ts
 │   │   ├── App.tsx
 │   │   ├── config.ts
 │   │   └── index.css
@@ -165,7 +171,7 @@ entrega_1_taller_2/
 
 ## Requisitos
 
-- Node.js compatible con Hardhat/Vite.
+- Node.js `^20.19.0` o `>=22.12.0` para Vite 8.
 - MetaMask instalado.
 - ETH de Sepolia para deploy y gas.
 - Dos o más wallets para los signers del MultiSig.
@@ -203,6 +209,8 @@ SEPOLIA_RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
 PRIVATE_KEY=private_key_Signer1_sin_0x
 PRIVATE_KEY_2=private_key_Signer2_sin_0x
 
+VITE_WALLETCONNECT_PROJECT_ID=project_id_de_reown
+
 SIGNERS=AddressSigner1,AddressSigner2
 THRESHOLD=2
 
@@ -213,6 +221,7 @@ PAYMENT_TOKEN_ADDRESS=0xDireccionDelTokenERC20
 MOCK_TOKEN_INITIAL_SUPPLY=1000000
 
 VITE_MARKETPLACE_ADDRESS=0xDireccionDelJobMarketplace
+VITE_MARKETPLACE_DEPLOYMENT_BLOCK=12345678
 VITE_PAYMENT_TOKEN_ADDRESS=0xDireccionDelTokenERC20
 ```
 
@@ -221,8 +230,11 @@ Notas:
 - Las private keys van sin `0x`.
 - No subir `.env` a Git.
 - Las variables `VITE_` son públicas en el navegador; no poner secretos en ellas.
+- `VITE_WALLETCONNECT_PROJECT_ID` se obtiene creando un proyecto público en Reown.
 - `VITE_CONTRACT_ADDRESS` se mantiene como alias legacy de `VITE_MULTISIG_ADDRESS`.
 - El frontend lee direcciones desde el `.env` de la raíz. No hace falta editar `frontend/src/config.ts`.
+- `VITE_MARKETPLACE_DEPLOYMENT_BLOCK` debe ser el bloque exacto donde se
+  desplegó `JobMarketplace`; el script de deploy lo imprime.
 
 ## Instalación
 
@@ -294,10 +306,12 @@ Copiar la salida:
 ```env
 PAYMENT_TOKEN_ADDRESS=0x...
 VITE_MARKETPLACE_ADDRESS=0x...
+VITE_MARKETPLACE_DEPLOYMENT_BLOCK=12345678
 VITE_PAYMENT_TOKEN_ADDRESS=0x...
 ```
 
-El script también imprime calldata de ejemplo para `complete(0, "approved")`.
+El script imprime el bloque de deploy, las variables necesarias y calldata de
+ejemplo para `complete(0, "approved")`.
 
 ## Frontend
 
@@ -317,6 +331,11 @@ npm run build
 
 La pantalla principal actual es el Marketplace. Los componentes de Entrega 2 siguen en el repo, pero ya no son la pantalla principal.
 
+El tablero descubre los IDs consultando los eventos históricos `JobCreated`
+desde `VITE_MARKETPLACE_DEPLOYMENT_BLOCK`. Después llama a `getJob(jobId)` para
+mostrar el estado actual de cada trabajo. De esta forma, los eventos indexan los
+jobs y el struct on-chain refleja transiciones posteriores.
+
 ## Uso básico de la app
 
 1. Conectar MetaMask en Sepolia.
@@ -324,7 +343,8 @@ La pantalla principal actual es el Marketplace. Los componentes de Entrega 2 sig
 3. Si el evaluador debe ser MultiSig, usar `Usar MultiSig`.
 4. Aprobar el token ERC-20 para el Marketplace.
 5. Fondear el job.
-6. El proveedor registra una entrega.
+6. El proveedor escribe el contenido o URL de la entrega. La aplicación lo
+   guarda en `localStorage` y registra únicamente su hash en el contrato.
 7. El evaluador completa o rechaza.
 8. Si el job vence en `Funded` o `Submitted`, cualquiera puede ejecutar `claimRefund`.
 
@@ -354,26 +374,70 @@ Completar después del deploy final.
 - `MultiSig` no se modifica: se reutiliza su capacidad de ejecutar llamadas arbitrarias.
 - `MockERC20` es solo para demo/testnet.
 - Se mantiene Solidity `0.8.4`, Hardhat `2.6.8` y ethers `v5` para minimizar cambios.
-- El frontend conserva código de Entrega 2, pero la pantalla principal es Marketplace.
+- El frontend conserva y reintegra la administración de Entrega 2 mediante pestañas
+  `Marketplace` y `Administración MultiSig`, compartiendo una única sesión de wallet.
+- El contenido del entregable se guarda fuera de la blockchain en `localStorage`.
+  `deliverableRef` contiene un `keccak256` del registro local, no el contenido.
+- El tablero usa `JobCreated` como fuente exclusiva de IDs y `getJob` como
+  fuente del estado actualizado.
 
 ## RainbowKit / ConnectKit
 
-La letra de Entrega 3 pide usar RainbowKit o ConnectKit. La decisión de diseño del proyecto es reintroducir **RainbowKit + wagmi**, porque coincide mejor con la base de Entrega 1 y con el stack esperado por la letra.
+El frontend reutiliza el stack de Entrega 1:
 
-Estado actual del código:
+- `RainbowKit` para conectar, cambiar de red y administrar la cuenta;
+- `wagmi` y `viem` para leer y escribir contratos;
+- TanStack React Query para caché e invalidación después de cada transacción.
 
-- El frontend actual todavía conecta wallet con `window.ethereum` y `ethers v5`.
-- RainbowKit/wagmi/ConnectKit todavía no aparecen como dependencias en `frontend/package.json`.
-- Por lo tanto, esta es una brecha pendiente antes de una entrega final si la evaluación exige explícitamente RainbowKit o ConnectKit en el código.
+No se usa conexión manual mediante `window.ethereum`, polling periódico ni ethers
+en el frontend. Ethers v5 permanece únicamente en Hardhat, scripts y tests.
 
-La documentación no marca RainbowKit como implementado para no falsear el estado real del repositorio.
+## Asignación de proveedor
+
+El proveedor puede definirse al publicar el trabajo o dejarse vacío. Si se crea
+sin proveedor:
+
+1. el job queda `Open`;
+2. el cliente lo selecciona;
+3. ingresa una dirección en `Asignar proveedor`;
+4. confirma `setProvider`;
+5. la query de jobs se invalida y la UI muestra el proveedor sin recargar;
+6. recién entonces se habilita el flujo `approve ERC-20 -> fund`.
+
+## Rechazo del cliente en Open
+
+Mientras un trabajo permanece `Open`, el cliente puede ingresar un motivo y
+ejecutar `reject`. La acción es irreversible, cambia el trabajo a `Rejected` y
+no mueve tokens porque el escrow todavía no fue fondeado.
+
+## Entregables off-chain
+
+Cuando el proveedor envía una entrega:
+
+1. escribe texto libre o una URL, con un máximo de 50.000 bytes;
+2. la aplicación guarda un registro local con job, proveedor, contenido y fecha;
+3. calcula un `keccak256` de ese registro;
+4. guarda inicialmente el registro como `pending`;
+5. llama a `submit(jobId, hash)`;
+6. después del receipt marca el registro como `confirmed`.
+
+El detalle del trabajo recupera el contenido utilizando el hash on-chain. Si el
+registro no existe en el navegador actual, la UI muestra la referencia y avisa
+que el contenido no está disponible.
+
+`localStorage` es suficiente para esta entrega, pero no está cifrado ni
+sincroniza información entre navegadores o dispositivos. El proveedor y el
+evaluador deben usar el mismo navegador y origen para revisar el contenido.
 
 ## Limitaciones y supuestos
 
 - `MockERC20` es público y tiene `mint`; usar solo para pruebas o demo.
 - `description` se guarda on-chain como `string`.
-- `deliverableRef` y `reason` son `bytes32`; textos largos deben resumirse.
-- El helper MultiSig genera calldata, pero no opera el contrato MultiSig completo.
+- `deliverableRef` es un hash `bytes32`; el contenido real permanece en
+  `localStorage`.
+- `reason` es `bytes32`, por lo que la UI limita el motivo a 31 bytes.
+- La UI MultiSig permite crear, aprobar, cancelar y ejecutar propuestas; cada signer
+  debe cambiar a su propia cuenta de MetaMask para aportar su aprobación.
 - Las direcciones Sepolia deben completarse después del deploy real.
 
 ## Integrantes

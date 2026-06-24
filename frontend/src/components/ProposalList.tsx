@@ -1,17 +1,18 @@
 import React, { useState } from "react";
 import { Proposal } from "../hooks/useMultisig";
+import type { Address } from "viem";
 import ProposalCard from "./ProposalCard";
 
 interface Props {
   proposals: Proposal[];
-  account: string | null;
+  account: Address | null;
   isSigner: boolean;
-  threshold: number;
+  threshold: bigint;
   txPending: boolean;
-  hasApproved: (id: number, account: string) => Promise<boolean>;
-  onApprove: (id: number) => Promise<boolean>;
-  onExecute: (id: number) => Promise<boolean>;
-  onCancel: (id: number) => Promise<boolean>;
+  hasApproved: (id: bigint, account: Address) => Promise<boolean>;
+  onApprove: (id: bigint) => Promise<boolean>;
+  onExecute: (id: bigint) => Promise<boolean>;
+  onCancel: (id: bigint) => Promise<boolean>;
 }
 
 type Filter = "all" | "pending" | "executed" | "cancelled";
@@ -118,7 +119,7 @@ const ProposalList: React.FC<Props> = (props) => {
       >
         {sorted.map((p) => (
           <ProposalCard
-            key={p.id}
+            key={p.id.toString()}
             proposal={p}
             account={props.account}
             isSigner={props.isSigner}

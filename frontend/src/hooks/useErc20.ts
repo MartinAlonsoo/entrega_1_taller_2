@@ -1,124 +1,138 @@
-import { useCallback, useState } from "react";
-import { ethers } from "ethers";
+import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useAccount,
+  useChainId,
+  usePublicClient,
+  useWriteContract,
+} from "wagmi";
+import { sepolia } from "wagmi/chains";
+import type { Address } from "viem";
 import ERC20ABI from "../abi/ERC20ABI";
-import { MARKETPLACE_ADDRESS, PAYMENT_TOKEN_ADDRESS } from "../config";
+import { marketplaceAddress, paymentTokenAddress } from "../lib/contracts";
+import { tokenKeys } from "../lib/queryKeys";
+import { contractErrorMessage } from "../lib/errors";
 
 export interface Erc20State {
   name: string;
   symbol: string;
   decimals: number;
-  balance: ethers.BigNumber;
-  allowance: ethers.BigNumber;
+  balance: bigint;
+  allowance: bigint;
   loading: boolean;
   pending: boolean;
   error: string | null;
 }
 
-const initialTokenState: Erc20State = {
-  name: "",
-  symbol: "",
-  decimals: 18,
-  balance: ethers.constants.Zero,
-  allowance: ethers.constants.Zero,
-  loading: false,
-  pending: false,
-  error: null,
-};
+export function useErc20() {
+  const { address, isConnected } = useAccount();
+  const chainId = useChainId();
+  const publicClient = usePublicClient();
+  const queryClient = useQueryClient();
+  const { writeContractAsync } = useWriteContract();
+  const [pending, setPending] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-function getErrorMessage(err: any, fallback: string) {
-  return err?.data?.message || err?.reason || err?.message || fallback;
-}
-
-export function useErc20(
-  provider: ethers.providers.Web3Provider | null,
-  account: string | null,
-  getSigner: () => ethers.Signer
-) {
-  const [token, setToken] = useState<Erc20State>(initialTokenState);
-
-  const getTokenContract = useCallback(
-    (signerOrProvider: ethers.Signer | ethers.providers.Provider) => {
-      if (!PAYMENT_TOKEN_ADDRESS) {
-        throw new Error("VITE_PAYMENT_TOKEN_ADDRESS no está configurada");
-      }
-
-      return new ethers.Contract(PAYMENT_TOKEN_ADDRESS, ERC20ABI, signerOrProvider);
-    },
-    []
+  const account = address ?? ("0x0000000000000000000000000000000000000000" as Address);
+  const queryKey = tokenKeys.account(
+    paymentTokenAddress,
+    account,
+    marketplaceAddress
   );
 
-  const refreshToken = useCallback(async () => {
-    if (!provider || !account) return;
-    if (!MARKETPLACE_ADDRESS) {
-      setToken((s) => ({
-        ...s,
-        error: "VITE_MARKETPLACE_ADDRESS no está configurada",
-      }));
-      return;
-    }
+  const query = useQuery({
+    queryKey,
+    enabled: isConnected && chainId === sepolia.id && !!address && !!publicClient,
+    queryFn: async () => {
+      if (!publicClient || !address) {
+        return {
+          name: "",
+          symbol: "",
+          decimals: 18,
+          balance: 0n,
+          allowance: 0n,
+        };
+      }
 
-    setToken((s) => ({ ...s, loading: true, error: null }));
-
-    try {
-      const contract = getTokenContract(provider);
       const [name, symbol, decimals, balance, allowance] = await Promise.all([
-        contract.name(),
-        contract.symbol(),
-        contract.decimals(),
-        contract.balanceOf(account),
-        contract.allowance(account, MARKETPLACE_ADDRESS),
+        publicClient.readContract({
+          address: paymentTokenAddress,
+          abi: ERC20ABI,
+          functionName: "name",
+        }),
+        publicClient.readContract({
+          address: paymentTokenAddress,
+          abi: ERC20ABI,
+          functionName: "symbol",
+        }),
+        publicClient.readContract({
+          address: paymentTokenAddress,
+          abi: ERC20ABI,
+          functionName: "decimals",
+        }),
+        publicClient.readContract({
+          address: paymentTokenAddress,
+          abi: ERC20ABI,
+          functionName: "balanceOf",
+          args: [address],
+        }),
+        publicClient.readContract({
+          address: paymentTokenAddress,
+          abi: ERC20ABI,
+          functionName: "allowance",
+          args: [address, marketplaceAddress],
+        }),
       ]);
 
-      setToken((s) => ({
-        ...s,
-        name,
-        symbol,
-        decimals,
-        balance,
-        allowance,
-        loading: false,
-        error: null,
-      }));
-    } catch (err: any) {
-      setToken((s) => ({
-        ...s,
-        loading: false,
-        error: getErrorMessage(err, "Error al leer token ERC-20"),
-      }));
-    }
-  }, [provider, account, getTokenContract]);
-
-  const approveMarketplace = useCallback(
-    async (amount: ethers.BigNumberish): Promise<boolean> => {
-      if (!MARKETPLACE_ADDRESS) {
-        setToken((s) => ({
-          ...s,
-          error: "VITE_MARKETPLACE_ADDRESS no está configurada",
-        }));
-        return false;
-      }
-
-      setToken((s) => ({ ...s, pending: true, error: null }));
-
-      try {
-        const contract = getTokenContract(getSigner());
-        const tx = await contract.approve(MARKETPLACE_ADDRESS, amount);
-        await tx.wait();
-        await refreshToken();
-
-        setToken((s) => ({ ...s, pending: false, error: null }));
-        return true;
-      } catch (err: any) {
-        setToken((s) => ({
-          ...s,
-          pending: false,
-          error: getErrorMessage(err, "Error al aprobar token ERC-20"),
-        }));
-        return false;
-      }
+      return { name, symbol, decimals, balance, allowance };
     },
-    [getSigner, getTokenContract, refreshToken]
-  );
+  });
 
-  return { token, refreshToken, approveMarketplace };
+  const approveMarketplace = async (amount: bigint): Promise<boolean> => {
+    if (!publicClient) return false;
+    setPending(true);
+    setActionError(null);
+    try {
+      const hash = await writeContractAsync({
+        address: paymentTokenAddress,
+        abi: ERC20ABI,
+        functionName: "approve",
+        args: [marketplaceAddress, amount],
+      });
+      await publicClient.waitForTransactionReceipt({ hash });
+      await queryClient.invalidateQueries({ queryKey });
+      return true;
+    } catch (error) {
+      setActionError(
+        contractErrorMessage(error, "Error al aprobar token ERC-20")
+      );
+      return false;
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const data = query.data;
+  const token: Erc20State = {
+    name: data?.name ?? "",
+    symbol: data?.symbol ?? "",
+    decimals: data?.decimals ?? 18,
+    balance: data?.balance ?? 0n,
+    allowance: data?.allowance ?? 0n,
+    loading: query.isLoading || query.isFetching,
+    pending,
+    error:
+      actionError ||
+      (query.error
+        ? contractErrorMessage(query.error, "Error al leer token ERC-20")
+        : null),
+  };
+
+  return {
+    token,
+    refreshToken: async () => {
+      await query.refetch();
+    },
+    approveMarketplace,
+  };
 }

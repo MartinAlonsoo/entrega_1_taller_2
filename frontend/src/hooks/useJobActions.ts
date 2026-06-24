@@ -1,138 +1,152 @@
-import { useCallback, useState } from "react";
-import { ethers } from "ethers";
+import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useAccount, usePublicClient, useWriteContract } from "wagmi";
+import {
+  stringToHex,
+  type Address,
+  type Hex,
+} from "viem";
 import JobMarketplaceABI from "../abi/JobMarketplaceABI";
-import { MARKETPLACE_ADDRESS } from "../config";
+import {
+  marketplaceAddress,
+  paymentTokenAddress,
+} from "../lib/contracts";
+import { marketplaceKeys, tokenKeys } from "../lib/queryKeys";
+import { contractErrorMessage } from "../lib/errors";
 
 export interface JobActionInput {
   description: string;
-  budget: ethers.BigNumberish;
-  evaluator: string;
-  provider: string;
-  expiresAt: number;
+  budget: bigint;
+  evaluator: Address;
+  provider: Address;
+  expiresAt: bigint;
 }
 
-function getErrorMessage(err: any, fallback: string) {
-  return err?.data?.message || err?.reason || err?.message || fallback;
-}
-
-function toBytes32(value: string, fieldName: string) {
-  try {
-    return ethers.utils.formatBytes32String(value);
-  } catch {
+function bytes32(value: string, fieldName: string) {
+  const trimmed = value.trim();
+  if (new TextEncoder().encode(trimmed).length > 31) {
     throw new Error(`${fieldName} debe tener 31 bytes o menos`);
   }
+  return stringToHex(trimmed, { size: 32 });
 }
 
-export function useJobActions(
-  getSigner: () => ethers.Signer,
-  refreshJobs: () => Promise<void>
-) {
+export function useJobActions() {
+  const { address } = useAccount();
+  const publicClient = usePublicClient();
+  const queryClient = useQueryClient();
+  const { writeContractAsync } = useWriteContract();
   const [actionPending, setActionPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const getWriteContract = useCallback(() => {
-    if (!MARKETPLACE_ADDRESS) {
-      throw new Error("VITE_MARKETPLACE_ADDRESS no está configurada");
+  const invalidateJobs = () =>
+    queryClient.invalidateQueries({
+      queryKey: marketplaceKeys.jobs(marketplaceAddress),
+    });
+
+  const invalidateToken = () =>
+    address
+      ? queryClient.invalidateQueries({
+          queryKey: tokenKeys.account(
+            paymentTokenAddress,
+            address,
+            marketplaceAddress
+          ),
+        })
+      : Promise.resolve();
+
+  const execute = async (
+    request: Parameters<typeof writeContractAsync>[0],
+    includeToken = false
+  ): Promise<boolean> => {
+    if (!publicClient) return false;
+
+    setActionPending(true);
+    setActionError(null);
+    try {
+      const hash = await writeContractAsync(request);
+      await publicClient.waitForTransactionReceipt({ hash });
+      await invalidateJobs();
+      if (includeToken) await invalidateToken();
+      return true;
+    } catch (error) {
+      setActionError(
+        contractErrorMessage(error, "Transacción del Marketplace fallida")
+      );
+      return false;
+    } finally {
+      setActionPending(false);
     }
-
-    return new ethers.Contract(MARKETPLACE_ADDRESS, JobMarketplaceABI, getSigner());
-  }, [getSigner]);
-
-  const withMarketplaceTx = useCallback(
-    async (fn: () => Promise<any>): Promise<boolean> => {
-      setActionPending(true);
-      setActionError(null);
-
-      try {
-        const tx = await fn();
-        await tx.wait();
-        await refreshJobs();
-        setActionPending(false);
-        return true;
-      } catch (err: any) {
-        setActionPending(false);
-        setActionError(getErrorMessage(err, "Transacción del Marketplace fallida"));
-        return false;
-      }
-    },
-    [refreshJobs]
-  );
-
-  const createJob = useCallback(
-    async (input: JobActionInput) => {
-      return withMarketplaceTx(() =>
-        getWriteContract().createJob(
-          input.description,
-          input.budget,
-          input.evaluator,
-          input.provider,
-          input.expiresAt
-        )
-      );
-    },
-    [getWriteContract, withMarketplaceTx]
-  );
-
-  const setProvider = useCallback(
-    async (jobId: number, provider: string) => {
-      return withMarketplaceTx(() => getWriteContract().setProvider(jobId, provider));
-    },
-    [getWriteContract, withMarketplaceTx]
-  );
-
-  const fund = useCallback(
-    async (jobId: number) => {
-      return withMarketplaceTx(() => getWriteContract().fund(jobId));
-    },
-    [getWriteContract, withMarketplaceTx]
-  );
-
-  const submit = useCallback(
-    async (jobId: number, deliverableRef: string) => {
-      return withMarketplaceTx(() =>
-        getWriteContract().submit(
-          jobId,
-          toBytes32(deliverableRef, "deliverableRef")
-        )
-      );
-    },
-    [getWriteContract, withMarketplaceTx]
-  );
-
-  const complete = useCallback(
-    async (jobId: number, reason: string) => {
-      return withMarketplaceTx(() =>
-        getWriteContract().complete(jobId, toBytes32(reason, "reason"))
-      );
-    },
-    [getWriteContract, withMarketplaceTx]
-  );
-
-  const reject = useCallback(
-    async (jobId: number, reason: string) => {
-      return withMarketplaceTx(() =>
-        getWriteContract().reject(jobId, toBytes32(reason, "reason"))
-      );
-    },
-    [getWriteContract, withMarketplaceTx]
-  );
-
-  const claimRefund = useCallback(
-    async (jobId: number) => {
-      return withMarketplaceTx(() => getWriteContract().claimRefund(jobId));
-    },
-    [getWriteContract, withMarketplaceTx]
-  );
+  };
 
   return {
     actionPending,
     actionError,
-    createJob,
-    setProvider,
-    fund,
-    submit,
-    complete,
-    reject,
-    claimRefund,
+    createJob: (input: JobActionInput) =>
+      execute({
+        address: marketplaceAddress,
+        abi: JobMarketplaceABI,
+        functionName: "createJob",
+        args: [
+          input.description,
+          input.budget,
+          input.evaluator,
+          input.provider,
+          input.expiresAt,
+        ],
+      }),
+    setProvider: (jobId: bigint, provider: Address) =>
+      execute({
+        address: marketplaceAddress,
+        abi: JobMarketplaceABI,
+        functionName: "setProvider",
+        args: [jobId, provider],
+      }),
+    fund: (jobId: bigint) =>
+      execute(
+        {
+          address: marketplaceAddress,
+          abi: JobMarketplaceABI,
+          functionName: "fund",
+          args: [jobId],
+        },
+        true
+      ),
+    submit: (jobId: bigint, deliverableRef: Hex) =>
+      execute({
+        address: marketplaceAddress,
+        abi: JobMarketplaceABI,
+        functionName: "submit",
+        args: [jobId, deliverableRef],
+      }),
+    complete: (jobId: bigint, reason: string) =>
+      execute(
+        {
+          address: marketplaceAddress,
+          abi: JobMarketplaceABI,
+          functionName: "complete",
+          args: [jobId, bytes32(reason, "reason")],
+        },
+        true
+      ),
+    reject: (jobId: bigint, reason: string, includeToken = true) =>
+      execute(
+        {
+          address: marketplaceAddress,
+          abi: JobMarketplaceABI,
+          functionName: "reject",
+          args: [jobId, bytes32(reason, "reason")],
+        },
+        includeToken
+      ),
+    claimRefund: (jobId: bigint) =>
+      execute(
+        {
+          address: marketplaceAddress,
+          abi: JobMarketplaceABI,
+          functionName: "claimRefund",
+          args: [jobId],
+        },
+        true
+      ),
   };
 }
